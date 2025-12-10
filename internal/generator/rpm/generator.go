@@ -1,0 +1,307 @@
+package rpm
+
+import (
+	"context"
+	"encoding/xml"
+	"fmt"
+	"path/filepath"
+	"time"
+
+	"github.com/ralt/repogen/internal/generator"
+	"github.com/ralt/repogen/internal/models"
+	"github.com/ralt/repogen/internal/scanner"
+	"github.com/ralt/repogen/internal/signer"
+	"github.com/ralt/repogen/internal/utils"
+	"github.com/sirupsen/logrus"
+)
+
+// Generator implements the generator.Generator interface for RPM repositories
+type Generator struct {
+	signer signer.Signer
+}
+
+// NewGenerator creates a new RPM generator
+func NewGenerator(s signer.Signer) generator.Generator {
+	return &Generator{
+		signer: s,
+	}
+}
+
+// Generate creates an RPM repository structure
+func (g *Generator) Generate(ctx context.Context, config *models.RepositoryConfig, packages []models.Package) error {
+	logrus.Info("Generating RPM repository...")
+
+	// Create directory structure
+	repoDir := config.OutputDir
+	repodataDir := filepath.Join(repoDir, "repodata")
+	packagesDir := filepath.Join(repoDir, "Packages")
+
+	if err := utils.EnsureDir(repodataDir); err != nil {
+		return err
+	}
+	if err := utils.EnsureDir(packagesDir); err != nil {
+		return err
+	}
+
+	// Copy RPM files to Packages directory
+	for i := range packages {
+		pkg := &packages[i]
+		dstPath := filepath.Join(packagesDir, filepath.Base(pkg.Filename))
+		if err := utils.CopyFile(pkg.Filename, dstPath); err != nil {
+			return fmt.Errorf("failed to copy %s: %w", pkg.Filename, err)
+		}
+		pkg.Filename = fmt.Sprintf("Packages/%s", filepath.Base(pkg.Filename))
+	}
+
+	// Generate primary.xml
+	primaryXML, err := generatePrimaryXML(packages)
+	if err != nil {
+		return fmt.Errorf("failed to generate primary.xml: %w", err)
+	}
+
+	primaryGz, err := utils.GzipCompress(primaryXML)
+	if err != nil {
+		return fmt.Errorf("failed to compress primary.xml: %w", err)
+	}
+
+	primaryChecksum, err := utils.CalculateChecksum(primaryGz, "sha256")
+	if err != nil {
+		return err
+	}
+
+	primaryPath := filepath.Join(repodataDir, fmt.Sprintf("%s-primary.xml.gz", primaryChecksum))
+	if err := utils.WriteFile(primaryPath, primaryGz, 0644); err != nil {
+		return fmt.Errorf("failed to write primary.xml.gz: %w", err)
+	}
+
+	// Generate repomd.xml
+	repomdXML, err := generateRepomdXML(primaryChecksum, int64(len(primaryGz)), int64(len(primaryXML)))
+	if err != nil {
+		return fmt.Errorf("failed to generate repomd.xml: %w", err)
+	}
+
+	repomdPath := filepath.Join(repodataDir, "repomd.xml")
+	if err := utils.WriteFile(repomdPath, repomdXML, 0644); err != nil {
+		return fmt.Errorf("failed to write repomd.xml: %w", err)
+	}
+
+	// Sign repomd.xml if signer available
+	if g.signer != nil {
+		signature, err := g.signer.SignDetached(repomdXML)
+		if err != nil {
+			return fmt.Errorf("failed to sign repomd.xml: %w", err)
+		}
+
+		sigPath := filepath.Join(repodataDir, "repomd.xml.asc")
+		if err := utils.WriteFile(sigPath, signature, 0644); err != nil {
+			return fmt.Errorf("failed to write repomd.xml.asc: %w", err)
+		}
+
+		logrus.Info("Repository signed successfully")
+	}
+
+	logrus.Infof("RPM repository generated successfully (%d packages)", len(packages))
+	return nil
+}
+
+// ValidatePackages checks if packages are valid RPM packages
+func (g *Generator) ValidatePackages(packages []models.Package) error {
+	for _, pkg := range packages {
+		if pkg.Name == "" {
+			return fmt.Errorf("package missing name: %s", pkg.Filename)
+		}
+	}
+	return nil
+}
+
+// GetSupportedType returns the package type this generator supports
+func (g *Generator) GetSupportedType() scanner.PackageType {
+	return scanner.TypeRpm
+}
+
+// XML structures for metadata
+
+type metadata struct {
+	XMLName       xml.Name  `xml:"metadata"`
+	Xmlns         string    `xml:"xmlns,attr"`
+	XmlnsRpm      string    `xml:"xmlns:rpm,attr"`
+	PackagesCount int       `xml:"packages,attr"`
+	Packages      []xmlPkg  `xml:"package"`
+}
+
+type xmlPkg struct {
+	Type      string     `xml:"type,attr"`
+	Name      string     `xml:"name"`
+	Arch      string     `xml:"arch"`
+	Version   xmlVersion `xml:"version"`
+	Checksum  xmlChecksum `xml:"checksum"`
+	Summary   string     `xml:"summary"`
+	Packager  string     `xml:"packager,omitempty"`
+	URL       string     `xml:"url,omitempty"`
+	Time      xmlTime    `xml:"time"`
+	Size      xmlSize    `xml:"size"`
+	Location  xmlLocation `xml:"location"`
+	Format    xmlFormat  `xml:"format"`
+}
+
+type xmlVersion struct {
+	Epoch   string `xml:"epoch,attr"`
+	Ver     string `xml:"ver,attr"`
+	Rel     string `xml:"rel,attr"`
+}
+
+type xmlChecksum struct {
+	Type  string `xml:"type,attr"`
+	Pkgid string `xml:"pkgid,attr"`
+	Value string `xml:",chardata"`
+}
+
+type xmlTime struct {
+	File  int64 `xml:"file,attr"`
+	Build int64 `xml:"build,attr"`
+}
+
+type xmlSize struct {
+	Package   int64 `xml:"package,attr"`
+	Installed int64 `xml:"installed,attr"`
+	Archive   int64 `xml:"archive,attr"`
+}
+
+type xmlLocation struct {
+	Href string `xml:"href,attr"`
+}
+
+type xmlFormat struct {
+	License string   `xml:"rpm:license,omitempty"`
+	Group   string   `xml:"rpm:group,omitempty"`
+}
+
+func generatePrimaryXML(packages []models.Package) ([]byte, error) {
+	var xmlPackages []xmlPkg
+
+	for _, pkg := range packages {
+		release := "1"
+		if r, ok := pkg.Metadata["Release"].(string); ok {
+			release = r
+		}
+
+		buildTime := time.Now().Unix()
+		if bt, ok := pkg.Metadata["BuildTime"].(int64); ok {
+			buildTime = bt
+		}
+
+		xmlPkg := xmlPkg{
+			Type: "rpm",
+			Name: pkg.Name,
+			Arch: pkg.Architecture,
+			Version: xmlVersion{
+				Epoch: "0",
+				Ver:   pkg.Version,
+				Rel:   release,
+			},
+			Checksum: xmlChecksum{
+				Type:  "sha256",
+				Pkgid: "YES",
+				Value: pkg.SHA256Sum,
+			},
+			Summary:  pkg.Description,
+			Packager: pkg.Maintainer,
+			URL:      pkg.Homepage,
+			Time: xmlTime{
+				File:  time.Now().Unix(),
+				Build: buildTime,
+			},
+			Size: xmlSize{
+				Package:   pkg.Size,
+				Installed: pkg.Size,
+				Archive:   pkg.Size,
+			},
+			Location: xmlLocation{
+				Href: pkg.Filename,
+			},
+			Format: xmlFormat{
+				License: pkg.License,
+				Group:   fmt.Sprintf("%v", pkg.Metadata["Group"]),
+			},
+		}
+
+		xmlPackages = append(xmlPackages, xmlPkg)
+	}
+
+	meta := metadata{
+		Xmlns:         "http://linux.duke.edu/metadata/common",
+		XmlnsRpm:      "http://linux.duke.edu/metadata/rpm",
+		PackagesCount: len(packages),
+		Packages:      xmlPackages,
+	}
+
+	xmlBytes, err := xml.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+
+	return append([]byte(xml.Header), xmlBytes...), nil
+}
+
+type repomd struct {
+	XMLName  xml.Name     `xml:"repomd"`
+	Xmlns    string       `xml:"xmlns,attr"`
+	XmlnsRpm string       `xml:"xmlns:rpm,attr"`
+	Revision int64        `xml:"revision"`
+	Data     []repomdData `xml:"data"`
+}
+
+type repomdData struct {
+	Type         string           `xml:"type,attr"`
+	Checksum     repomdChecksum   `xml:"checksum"`
+	OpenChecksum repomdChecksum   `xml:"open-checksum"`
+	Location     repomdLocation   `xml:"location"`
+	Timestamp    int64            `xml:"timestamp"`
+	Size         int64            `xml:"size"`
+	OpenSize     int64            `xml:"open-size"`
+}
+
+type repomdChecksum struct {
+	Type  string `xml:"type,attr"`
+	Value string `xml:",chardata"`
+}
+
+type repomdLocation struct {
+	Href string `xml:"href,attr"`
+}
+
+func generateRepomdXML(primaryChecksum string, compressedSize, uncompressedSize int64) ([]byte, error) {
+	openChecksum, _ := utils.CalculateChecksum([]byte(primaryChecksum), "sha256")
+
+	repomd := repomd{
+		Xmlns:    "http://linux.duke.edu/metadata/repo",
+		XmlnsRpm: "http://linux.duke.edu/metadata/rpm",
+		Revision: time.Now().Unix(),
+		Data: []repomdData{
+			{
+				Type: "primary",
+				Checksum: repomdChecksum{
+					Type:  "sha256",
+					Value: primaryChecksum,
+				},
+				OpenChecksum: repomdChecksum{
+					Type:  "sha256",
+					Value: openChecksum,
+				},
+				Location: repomdLocation{
+					Href: fmt.Sprintf("repodata/%s-primary.xml.gz", primaryChecksum),
+				},
+				Timestamp: time.Now().Unix(),
+				Size:      compressedSize,
+				OpenSize:  uncompressedSize,
+			},
+		},
+	}
+
+	xmlBytes, err := xml.MarshalIndent(repomd, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+
+	return append([]byte(xml.Header), xmlBytes...), nil
+}

@@ -1,0 +1,26 @@
+package models
+
+// RepositoryConfig contains configuration for repository generation
+type RepositoryConfig struct {
+	// Input/Output
+	InputDir  string
+	OutputDir string
+
+	// Repository metadata
+	Origin      string
+	Label       string
+	Codename    string   // For Debian
+	Suite       string   // For Debian
+	Components  []string // For Debian (main, contrib, etc.)
+	Arches      []string // Architectures to support
+
+	// Signing
+	GPGKeyPath      string
+	GPGPassphrase   string
+	RSAKeyPath      string
+	RSAPassphrase   string
+	RSAKeyName      string // For Alpine
+
+	// Type-specific options
+	BaseURL string // For Homebrew bottles
+}

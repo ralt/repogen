@@ -1,0 +1,229 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-package:
+    name: Build and Package Repository
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Get version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Build repogen binary
+        run: |
+          # Build for multiple platforms
+          mkdir -p dist
+
+          # Linux amd64
+          GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/repogen-linux-amd64 ./cmd/repogen
+
+          # Linux arm64
+          GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o dist/repogen-linux-arm64 ./cmd/repogen
+
+          # macOS amd64
+          GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o dist/repogen-darwin-amd64 ./cmd/repogen
+
+          # macOS arm64
+          GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o dist/repogen-darwin-arm64 ./cmd/repogen
+
+      - name: Create Debian package
+        run: |
+          mkdir -p build/deb/DEBIAN
+          mkdir -p build/deb/usr/local/bin
+
+          # Copy binary
+          cp dist/repogen-linux-amd64 build/deb/usr/local/bin/repogen
+          chmod +x build/deb/usr/local/bin/repogen
+
+          # Create control file
+          cat > build/deb/DEBIAN/control <<EOF
+          Package: repogen
+          Version: ${{ steps.version.outputs.VERSION }}
+          Section: utils
+          Priority: optional
+          Architecture: amd64
+          Maintainer: Repogen <noreply@example.com>
+          Description: Repository generator for Debian, RPM, Alpine, and Homebrew
+           Repogen scans directories for package files and generates static
+           repository structures that can be served as websites.
+          EOF
+
+          # Build package
+          dpkg-deb --build build/deb dist/repogen_${{ steps.version.outputs.VERSION }}_amd64.deb
+
+      - name: Create RPM package
+        run: |
+          mkdir -p build/rpm/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
+
+          # Create spec file
+          cat > build/rpm/SPECS/repogen.spec <<EOF
+          Name:           repogen
+          Version:        ${{ steps.version.outputs.VERSION }}
+          Release:        1
+          Summary:        Repository generator for Debian, RPM, Alpine, and Homebrew
+          License:        MIT
+          BuildArch:      x86_64
+
+          %description
+          Repogen scans directories for package files and generates static
+          repository structures that can be served as websites.
+
+          %install
+          mkdir -p %{buildroot}/usr/local/bin
+          cp %{_sourcedir}/repogen %{buildroot}/usr/local/bin/repogen
+          chmod +x %{buildroot}/usr/local/bin/repogen
+
+          %files
+          /usr/local/bin/repogen
+
+          %changelog
+          * $(date '+%a %b %d %Y') GitHub Actions <noreply@github.com> - ${{ steps.version.outputs.VERSION }}-1
+          - Release ${{ steps.version.outputs.VERSION }}
+          EOF
+
+          # Copy binary to SOURCES
+          cp dist/repogen-linux-amd64 build/rpm/SOURCES/repogen
+
+          # Build RPM
+          rpmbuild --define "_topdir $(pwd)/build/rpm" -bb build/rpm/SPECS/repogen.spec
+          cp build/rpm/RPMS/x86_64/repogen-${{ steps.version.outputs.VERSION }}-1.x86_64.rpm dist/
+
+      - name: Create Alpine APK package
+        run: |
+          mkdir -p build/apk/usr/local/bin
+
+          # Copy binary
+          cp dist/repogen-linux-amd64 build/apk/usr/local/bin/repogen
+          chmod +x build/apk/usr/local/bin/repogen
+
+          # Create .PKGINFO
+          cat > build/apk/.PKGINFO <<EOF
+          pkgname = repogen
+          pkgver = ${{ steps.version.outputs.VERSION }}-r0
+          pkgdesc = Repository generator for Debian, RPM, Alpine, and Homebrew
+          url = https://github.com/${{ github.repository }}
+          builddate = $(date +%s)
+          size = $(stat -c%s build/apk/usr/local/bin/repogen)
+          arch = x86_64
+          license = MIT
+          EOF
+
+          # Package into APK
+          cd build/apk
+          tar -czf ../../dist/repogen-${{ steps.version.outputs.VERSION }}-r0.apk --sort=name .PKGINFO usr/
+
+      - name: Create Homebrew bottle
+        run: |
+          mkdir -p build/bottle/repogen/${{ steps.version.outputs.VERSION }}/bin
+
+          # Copy binary
+          cp dist/repogen-darwin-arm64 build/bottle/repogen/${{ steps.version.outputs.VERSION }}/bin/repogen
+          chmod +x build/bottle/repogen/${{ steps.version.outputs.VERSION }}/bin/repogen
+
+          # Package into bottle
+          cd build/bottle
+          tar czf ../../dist/repogen--${{ steps.version.outputs.VERSION }}.arm64_monterey.bottle.tar.gz repogen/
+
+      - name: Generate repository
+        run: |
+          # Use the built binary to generate a repository containing itself
+          chmod +x dist/repogen-linux-amd64
+
+          # Create repository for each package type
+          ./dist/repogen-linux-amd64 generate \
+            --input-dir dist \
+            --output-dir repo \
+            --origin "Repogen Repository" \
+            --label "Repogen" \
+            --codename stable \
+            --base-url "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.VERSION }}"
+
+      - name: Create repository archive
+        run: |
+          # Create a zip of the generated repository
+          cd repo
+          zip -r ../repogen-repository-${{ steps.version.outputs.VERSION }}.zip .
+          cd ..
+
+          # Also create a tarball
+          tar czf repogen-repository-${{ steps.version.outputs.VERSION }}.tar.gz -C repo .
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum * > ../SHA256SUMS
+          cd ..
+          mv SHA256SUMS dist/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*
+            repogen-repository-${{ steps.version.outputs.VERSION }}.zip
+            repogen-repository-${{ steps.version.outputs.VERSION }}.tar.gz
+          body: |
+            # Repogen ${{ steps.version.outputs.VERSION }}
+
+            ## Downloads
+
+            ### Binaries
+            - `repogen-linux-amd64` - Linux x86_64
+            - `repogen-linux-arm64` - Linux ARM64
+            - `repogen-darwin-amd64` - macOS Intel
+            - `repogen-darwin-arm64` - macOS Apple Silicon
+
+            ### Packages
+            - `repogen_${{ steps.version.outputs.VERSION }}_amd64.deb` - Debian/Ubuntu package
+            - `repogen-${{ steps.version.outputs.VERSION }}-1.x86_64.rpm` - Fedora/RHEL package
+            - `repogen-${{ steps.version.outputs.VERSION }}-r0.apk` - Alpine package
+            - `repogen--${{ steps.version.outputs.VERSION }}.arm64_monterey.bottle.tar.gz` - Homebrew bottle
+
+            ### Repository Archive
+            - `repogen-repository-${{ steps.version.outputs.VERSION }}.zip` - Complete repository (ZIP)
+            - `repogen-repository-${{ steps.version.outputs.VERSION }}.tar.gz` - Complete repository (tar.gz)
+
+            Extract the repository archive and upload to S3 or serve via web server.
+
+            ## Installation
+
+            ### Debian/Ubuntu
+            ```bash
+            wget https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.VERSION }}/repogen_${{ steps.version.outputs.VERSION }}_amd64.deb
+            sudo dpkg -i repogen_${{ steps.version.outputs.VERSION }}_amd64.deb
+            ```
+
+            ### Fedora/RHEL
+            ```bash
+            wget https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.VERSION }}/repogen-${{ steps.version.outputs.VERSION }}-1.x86_64.rpm
+            sudo dnf install repogen-${{ steps.version.outputs.VERSION }}-1.x86_64.rpm
+            ```
+
+            ### Binary (any platform)
+            ```bash
+            # Linux
+            wget https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.VERSION }}/repogen-linux-amd64
+            chmod +x repogen-linux-amd64
+            sudo mv repogen-linux-amd64 /usr/local/bin/repogen
+            ```
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
