@@ -5,6 +5,8 @@ import (
 	"crypto"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 
 	"github.com/ProtonMail/go-crypto/openpgp"
 	"github.com/ProtonMail/go-crypto/openpgp/armor"
@@ -13,7 +15,8 @@ import (
 
 // GPGSigner implements Signer interface using GPG
 type GPGSigner struct {
-	entity *openpgp.Entity
+	entity  *openpgp.Entity
+	keyPath string // Path to the private key file for GPG command-line operations
 }
 
 // NewGPGSigner creates a new GPG signer from a private key file
@@ -66,39 +69,57 @@ func NewGPGSigner(keyPath, passphrase string) (*GPGSigner, error) {
 		}
 	}
 
-	return &GPGSigner{entity: entity}, nil
+	return &GPGSigner{
+		entity:  entity,
+		keyPath: keyPath,
+	}, nil
 }
 
 // SignCleartext creates a cleartext signature (for Debian InRelease)
 func (s *GPGSigner) SignCleartext(data []byte) ([]byte, error) {
-	var buf bytes.Buffer
+	// Use GPG command-line for cleartext signing since go-crypto's implementation
+	// doesn't produce signatures that APT can verify correctly
 
-	// Create armored writer for cleartext signature
-	w, err := armor.Encode(&buf, "PGP SIGNED MESSAGE", map[string]string{"Hash": "SHA512"})
+	// Create a temporary GPG home directory
+	tmpDir, err := os.MkdirTemp("", "repogen-gpg-*")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create temp dir: %w", err)
 	}
+	defer os.RemoveAll(tmpDir)
 
-	// Write the data
-	if _, err := w.Write(data); err != nil {
-		return nil, err
-	}
-
-	if err := w.Close(); err != nil {
-		return nil, err
-	}
-
-	// Now sign it
-	var sigBuf bytes.Buffer
-	err = openpgp.ArmoredDetachSignText(&sigBuf, s.entity, bytes.NewReader(data), &packet.Config{
-		DefaultHash: crypto.SHA512,
-	})
+	// Import the key
+	keyPath, err := filepath.Abs(s.keyPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to sign: %w", err)
+		return nil, fmt.Errorf("failed to get absolute key path: %w", err)
 	}
 
-	// Combine into cleartext signature format
-	return createCleartextSignature(data, sigBuf.Bytes()), nil
+	cmd := exec.Command("gpg", "--homedir", tmpDir, "--import", keyPath)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("failed to import key: %w\nOutput: %s", err, output)
+	}
+
+	// Create temp file for input data
+	inputFile := filepath.Join(tmpDir, "input.txt")
+	if err := os.WriteFile(inputFile, data, 0600); err != nil {
+		return nil, fmt.Errorf("failed to write input file: %w", err)
+	}
+
+	// Sign with GPG
+	cmd = exec.Command("gpg", "--homedir", tmpDir, "--clearsign", "--armor",
+		"--digest-algo", "SHA512", "--batch", "--yes", inputFile)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("failed to sign with GPG: %w\nOutput: %s", err, output)
+	}
+
+	// Read the signed output
+	signedFile := inputFile + ".asc"
+	signedData, err := os.ReadFile(signedFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read signed file: %w", err)
+	}
+
+	return signedData, nil
 }
 
 // SignDetached creates a detached signature (for Release.gpg, repomd.xml.asc)
@@ -135,6 +156,46 @@ func (s *GPGSigner) GetPublicKey() ([]byte, error) {
 	}
 
 	return buf.Bytes(), nil
+}
+
+// canonicalizeText implements RFC 4880 text canonicalization for signing
+// Removes trailing whitespace from each line and uses CRLF line endings
+func canonicalizeText(data []byte) []byte {
+	lines := bytes.Split(data, []byte("\n"))
+	var buf bytes.Buffer
+
+	for i, line := range lines {
+		// Remove trailing spaces and tabs (but not the content)
+		line = bytes.TrimRight(line, " \t\r")
+		buf.Write(line)
+		// Add CRLF for all lines except the last empty one
+		if i < len(lines)-1 || len(line) > 0 {
+			buf.WriteString("\r\n")
+		}
+	}
+
+	return buf.Bytes()
+}
+
+// dashEscape performs dash-escaping required by OpenPGP cleartext signatures
+// Any line starting with '-' must be prefixed with "- " (RFC 4880 section 7.1)
+func dashEscape(data []byte) []byte {
+	lines := bytes.Split(data, []byte("\n"))
+	var buf bytes.Buffer
+
+	for i, line := range lines {
+		// Dash-escape lines starting with '-'
+		if bytes.HasPrefix(line, []byte("-")) {
+			buf.WriteString("- ")
+		}
+		buf.Write(line)
+		// Add newline except for the last line if it was empty
+		if i < len(lines)-1 {
+			buf.WriteString("\n")
+		}
+	}
+
+	return buf.Bytes()
 }
 
 // createCleartextSignature creates a PGP cleartext signature format

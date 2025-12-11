@@ -49,6 +49,14 @@ func TestIntegration(t *testing.T) {
 		testDebianRepository(t, projectRoot, testDir)
 	})
 
+	t.Run("DebianSigned", func(t *testing.T) {
+		testDebianSignedRepository(t, projectRoot, testDir)
+	})
+
+	t.Run("DebianSignedTrixie", func(t *testing.T) {
+		testDebianSignedTrixieRepository(t, projectRoot, testDir)
+	})
+
 	t.Run("DebianTrixie", func(t *testing.T) {
 		testDebianTrixieRepository(t, projectRoot, testDir)
 	})
@@ -137,6 +145,222 @@ repogen-gzipped
 	}
 
 	t.Log("✓ Debian repository test passed")
+}
+
+func testDebianSignedRepository(t *testing.T, projectRoot, testDir string) {
+	repoDir := filepath.Join(testDir, "debian-signed-repo")
+	fixturesDir := filepath.Join(projectRoot, "test", "fixtures", "debs")
+	gpgFixturesDir := filepath.Join(projectRoot, "test", "fixtures", "gpg-keys")
+
+	// Check if test packages exist
+	if _, err := os.Stat(filepath.Join(fixturesDir, "repogen-test_1.0.0_amd64.deb")); os.IsNotExist(err) {
+		t.Skip("Debian test packages not found, run build-test-packages.sh first")
+	}
+
+	// Use fixture keys
+	keyPath := filepath.Join(gpgFixturesDir, "test-key.asc")
+	pubKeyPath := filepath.Join(gpgFixturesDir, "test-key-pub.asc")
+
+	// Check if test keys exist
+	if _, err := os.Stat(keyPath); os.IsNotExist(err) {
+		t.Fatalf("Test GPG keys not found at %s", keyPath)
+	}
+
+	// Generate signed repository
+	t.Log("Generating signed Debian repository...")
+	repoGenBin := filepath.Join(projectRoot, "repogen")
+	cmd := exec.Command(repoGenBin, "generate",
+		"--input-dir", fixturesDir,
+		"--output-dir", repoDir,
+		"--codename", "testing",
+		"--gpg-key", keyPath,
+	)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to generate signed repository: %v\nOutput: %s", err, output)
+	}
+
+	// Verify InRelease is signed (contains PGP signature)
+	inReleasePath := filepath.Join(repoDir, "dists", "testing", "InRelease")
+	inReleaseData, err := os.ReadFile(inReleasePath)
+	if err != nil {
+		t.Fatalf("Failed to read InRelease: %v", err)
+	}
+
+	inReleaseContent := string(inReleaseData)
+	if !strings.Contains(inReleaseContent, "-----BEGIN PGP SIGNED MESSAGE-----") {
+		t.Errorf("InRelease missing PGP signed message header")
+	}
+	if !strings.Contains(inReleaseContent, "-----BEGIN PGP SIGNATURE-----") {
+		t.Errorf("InRelease missing PGP signature block")
+	}
+	if !strings.Contains(inReleaseContent, "Hash: SHA512") {
+		t.Errorf("InRelease missing Hash header")
+	}
+
+	// Verify Release.gpg exists
+	releaseGpgPath := filepath.Join(repoDir, "dists", "testing", "Release.gpg")
+	if _, err := os.Stat(releaseGpgPath); os.IsNotExist(err) {
+		t.Errorf("Release.gpg not found for signed repository")
+	}
+
+	// Test repository in Docker with GPG verification (no trusted=yes!)
+	t.Log("Testing signed repository in Debian container WITH signature verification...")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	// Read public key for Docker
+	pubKeyData, err := os.ReadFile(pubKeyPath)
+	if err != nil {
+		t.Fatalf("Failed to read public key: %v", err)
+	}
+
+	dockerCmd := exec.CommandContext(ctx, "docker", "run", "--rm",
+		"-v", fmt.Sprintf("%s:/repo:ro", repoDir),
+		"debian:bookworm",
+		"bash", "-c", fmt.Sprintf(`
+set -e
+
+# Install GPG
+apt-get update -qq
+apt-get install -y -qq gnupg > /dev/null
+
+# Import GPG public key
+cat > /tmp/repo-key.asc <<'PUBKEY_EOF'
+%s
+PUBKEY_EOF
+gpg --dearmor < /tmp/repo-key.asc > /etc/apt/trusted.gpg.d/repogen-test.gpg
+
+# Add repository WITHOUT trusted=yes (signature will be verified!)
+echo "deb file:///repo testing main" > /etc/apt/sources.list.d/test.list
+
+# This should succeed with proper signature validation
+apt-get update
+
+# Verify packages are available
+apt-cache policy repogen-test repogen-utils repogen-gzipped
+
+# Install packages
+apt-get install -y repogen-test repogen-utils repogen-gzipped
+
+# Verify installed
+repogen-test
+repogen-utils
+repogen-gzipped
+`, string(pubKeyData)),
+	)
+	dockerCmd.Stdout = os.Stdout
+	dockerCmd.Stderr = os.Stderr
+
+	if err := dockerCmd.Run(); err != nil {
+		t.Fatalf("Docker signed repository test failed: %v", err)
+	}
+
+	t.Log("✓ Signed Debian repository test passed (signature verified by APT)")
+}
+
+func testDebianSignedTrixieRepository(t *testing.T, projectRoot, testDir string) {
+	repoDir := filepath.Join(testDir, "debian-signed-trixie-repo")
+	fixturesDir := filepath.Join(projectRoot, "test", "fixtures", "debs")
+	gpgFixturesDir := filepath.Join(projectRoot, "test", "fixtures", "gpg-keys")
+
+	// Check if test packages exist
+	if _, err := os.Stat(filepath.Join(fixturesDir, "repogen-test_1.0.0_amd64.deb")); os.IsNotExist(err) {
+		t.Skip("Debian test packages not found, run build-test-packages.sh first")
+	}
+
+	// Use fixture keys
+	keyPath := filepath.Join(gpgFixturesDir, "test-key.asc")
+	pubKeyPath := filepath.Join(gpgFixturesDir, "test-key-pub.asc")
+
+	// Check if test keys exist
+	if _, err := os.Stat(keyPath); os.IsNotExist(err) {
+		t.Fatalf("Test GPG keys not found at %s", keyPath)
+	}
+
+	// Generate signed repository
+	t.Log("Generating signed Debian repository for Trixie...")
+	repoGenBin := filepath.Join(projectRoot, "repogen")
+	cmd := exec.Command(repoGenBin, "generate",
+		"--input-dir", fixturesDir,
+		"--output-dir", repoDir,
+		"--codename", "testing",
+		"--gpg-key", keyPath,
+	)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to generate signed repository: %v\nOutput: %s", err, output)
+	}
+
+	// Verify InRelease is signed (contains PGP signature)
+	inReleasePath := filepath.Join(repoDir, "dists", "testing", "InRelease")
+	inReleaseData, err := os.ReadFile(inReleasePath)
+	if err != nil {
+		t.Fatalf("Failed to read InRelease: %v", err)
+	}
+
+	inReleaseContent := string(inReleaseData)
+	if !strings.Contains(inReleaseContent, "-----BEGIN PGP SIGNED MESSAGE-----") {
+		t.Errorf("InRelease missing PGP signed message header")
+	}
+	if !strings.Contains(inReleaseContent, "-----BEGIN PGP SIGNATURE-----") {
+		t.Errorf("InRelease missing PGP signature block")
+	}
+	if !strings.Contains(inReleaseContent, "Hash: SHA512") {
+		t.Errorf("InRelease missing Hash header")
+	}
+
+	// Test repository in Debian Trixie with GPG verification (no trusted=yes!)
+	t.Log("Testing signed repository in Debian Trixie container WITH signature verification...")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	// Read public key for Docker
+	pubKeyData, err := os.ReadFile(pubKeyPath)
+	if err != nil {
+		t.Fatalf("Failed to read public key: %v", err)
+	}
+
+	dockerCmd := exec.CommandContext(ctx, "docker", "run", "--rm",
+		"-v", fmt.Sprintf("%s:/repo:ro", repoDir),
+		"debian:trixie",
+		"bash", "-c", fmt.Sprintf(`
+set -e
+
+# Install GPG
+apt-get update -qq
+apt-get install -y -qq gnupg > /dev/null
+
+# Import GPG public key
+cat > /tmp/repo-key.asc <<'PUBKEY_EOF'
+%s
+PUBKEY_EOF
+gpg --dearmor < /tmp/repo-key.asc > /etc/apt/trusted.gpg.d/repogen-test.gpg
+
+# Add repository WITHOUT trusted=yes (signature will be verified!)
+echo "deb file:///repo testing main" > /etc/apt/sources.list.d/test.list
+
+# This should succeed with proper signature validation
+apt-get update
+
+# Verify packages are available
+apt-cache policy repogen-test repogen-utils repogen-gzipped
+
+# Install packages
+apt-get install -y repogen-test repogen-utils repogen-gzipped
+
+# Verify installed
+repogen-test
+repogen-utils
+repogen-gzipped
+`, string(pubKeyData)),
+	)
+	dockerCmd.Stdout = os.Stdout
+	dockerCmd.Stderr = os.Stderr
+
+	if err := dockerCmd.Run(); err != nil {
+		t.Fatalf("Docker Trixie signed repository test failed: %v", err)
+	}
+
+	t.Log("✓ Signed Debian Trixie repository test passed (signature verified by APT)")
 }
 
 func testDebianTrixieRepository(t *testing.T, projectRoot, testDir string) {
@@ -470,4 +694,63 @@ func findInString(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// generateTestGPGKey creates a test GPG key pair for repository signing tests
+func generateTestGPGKey(privateKeyPath, publicKeyPath string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Create GPG batch file for unattended key generation
+	batchContent := `
+%no-protection
+Key-Type: RSA
+Key-Length: 2048
+Name-Real: Repogen Test Key
+Name-Email: test@repogen.local
+Expire-Date: 0
+%commit
+`
+
+	tmpDir := filepath.Dir(privateKeyPath)
+	batchFile := filepath.Join(tmpDir, "gpg-batch.txt")
+	if err := os.WriteFile(batchFile, []byte(batchContent), 0600); err != nil {
+		return fmt.Errorf("failed to create batch file: %w", err)
+	}
+	defer os.Remove(batchFile)
+
+	// Generate key using gpg with temporary home directory
+	gpgHome := filepath.Join(tmpDir, "gpg-home")
+	if err := os.MkdirAll(gpgHome, 0700); err != nil {
+		return fmt.Errorf("failed to create GPG home: %w", err)
+	}
+
+	// Generate the key
+	cmd := exec.CommandContext(ctx, "gpg", "--homedir", gpgHome, "--batch", "--gen-key", batchFile)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to generate GPG key: %w\nOutput: %s", err, output)
+	}
+
+	// Export private key
+	cmd = exec.CommandContext(ctx, "gpg", "--homedir", gpgHome, "--armor", "--export-secret-keys", "test@repogen.local")
+	privateKey, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("failed to export private key: %w", err)
+	}
+	if err := os.WriteFile(privateKeyPath, privateKey, 0600); err != nil {
+		return fmt.Errorf("failed to write private key: %w", err)
+	}
+
+	// Export public key
+	cmd = exec.CommandContext(ctx, "gpg", "--homedir", gpgHome, "--armor", "--export", "test@repogen.local")
+	publicKey, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("failed to export public key: %w", err)
+	}
+	if err := os.WriteFile(publicKeyPath, publicKey, 0644); err != nil {
+		return fmt.Errorf("failed to write public key: %w", err)
+	}
+
+	return nil
 }
