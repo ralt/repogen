@@ -63,6 +63,7 @@ structures with appropriate metadata files and signatures.`,
 
 	// Type-specific options
 	cmd.Flags().StringVar(&config.BaseURL, "base-url", "", "Base URL for Homebrew bottles and RPM .repo files")
+	cmd.Flags().StringVar(&config.GPGKeyURL, "gpg-key-url", "", "GPG key URL for RPM .repo files (supports $releasever/$basearch variables)")
 	cmd.Flags().StringVar(&config.DistroVariant, "distro", "fedora", "Distribution variant for RPM repos (fedora, centos, rhel)")
 	cmd.Flags().StringVar(&config.Version, "version", "", "Release version for RPM repos (e.g., 40 for Fedora 40). Auto-detected from RPM metadata if not provided")
 
@@ -95,6 +96,15 @@ func validateConfig(config *models.RepositoryConfig) error {
 	}
 	if config.Label == "" {
 		config.Label = config.Origin
+	}
+
+	// Validate GPG key URL requirement for RPM .repo files
+	if config.BaseURL != "" && config.GPGKeyPath != "" && config.GPGKeyURL == "" {
+		return &models.RepoGenError{
+			Type: models.ErrInvalidConfig,
+			Err:  fmt.Errorf("--gpg-key-url is required when both --base-url and --gpg-key are specified for signed RPM .repo files\n" +
+				"Example: --gpg-key-url 'https://example.com/repo/$releasever/$basearch/RPM-GPG-KEY-myrepo'"),
+		}
 	}
 
 	return nil

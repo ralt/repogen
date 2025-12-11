@@ -389,7 +389,8 @@ func generateRepoFile(config *models.RepositoryConfig, isSigned bool) ([]byte, e
 
 	if isSigned {
 		gpgCheck = "1"
-		gpgKey = fmt.Sprintf("gpgkey=%sRPM-GPG-KEY-%s\n", baseURL, repoID)
+		// Use explicit GPG key URL instead of auto-generating
+		gpgKey = fmt.Sprintf("gpgkey=%s\n", config.GPGKeyURL)
 
 		// Fedora typically enables repo_gpgcheck
 		if distro == "fedora" {

@@ -24,5 +24,6 @@ type RepositoryConfig struct {
 
 	// Type-specific options
 	BaseURL       string // For Homebrew bottles and RPM .repo files
+	GPGKeyURL     string // For RPM: explicit GPG key URL (supports $releasever/$basearch variables)
 	DistroVariant string // For RPM: fedora, centos, rhel (affects .repo defaults)
 }
