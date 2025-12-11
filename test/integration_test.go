@@ -765,7 +765,19 @@ EOF
 pacman -Sy
 
 # List available packages from test repo
+echo "Available packages in test-repo:"
 pacman -Sl test-repo
+
+# Install package from test repo
+echo "Installing nano from test-repo..."
+pacman -S --noconfirm test-repo/nano
+
+# Verify installation
+echo "Verifying nano installation..."
+nano --version
+which nano
+
+echo "✓ Package installed and verified successfully!"
 `,
 	)
 	dockerCmd.Stdout = os.Stdout
