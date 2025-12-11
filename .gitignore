@@ -28,6 +28,7 @@ Thumbs.db
 # Generated repositories
 repo/
 test/output/
+test/integration-output/
 
 # Keys (never commit private keys!)
 *.key
