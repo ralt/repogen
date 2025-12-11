@@ -195,7 +195,15 @@ func (g *Generator) generateRelease(config *models.RepositoryConfig) error {
 
 		logrus.Info("Release file signed successfully")
 	} else {
+		// For unsigned repositories, create InRelease with Release content
+		// This allows modern apt (especially Debian Trixie) to work with [trusted=yes]
+		inReleasePath := filepath.Join(distsDir, "InRelease")
+		if err := utils.WriteFile(inReleasePath, releaseData, 0644); err != nil {
+			return fmt.Errorf("failed to write InRelease: %w", err)
+		}
+
 		logrus.Warn("No signer configured, repository will be unsigned")
+		logrus.Info("Generated InRelease file for compatibility with modern apt")
 	}
 
 	return nil

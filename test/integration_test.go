@@ -1,6 +1,7 @@
 package test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -46,6 +47,10 @@ func TestIntegration(t *testing.T) {
 	// Run tests for each repository type
 	t.Run("Debian", func(t *testing.T) {
 		testDebianRepository(t, projectRoot, testDir)
+	})
+
+	t.Run("DebianTrixie", func(t *testing.T) {
+		testDebianTrixieRepository(t, projectRoot, testDir)
 	})
 
 	t.Run("RPM", func(t *testing.T) {
@@ -98,6 +103,12 @@ func testDebianRepository(t *testing.T, projectRoot, testDir string) {
 		}
 	}
 
+	// Verify InRelease exists (should always be generated now)
+	inReleasePath := filepath.Join(repoDir, "dists", "testing", "InRelease")
+	if _, err := os.Stat(inReleasePath); os.IsNotExist(err) {
+		t.Errorf("InRelease file not found: %s", inReleasePath)
+	}
+
 	// Test repository in Docker
 	t.Log("Testing repository in Debian container...")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -126,6 +137,87 @@ repogen-gzipped
 	}
 
 	t.Log("✓ Debian repository test passed")
+}
+
+func testDebianTrixieRepository(t *testing.T, projectRoot, testDir string) {
+	repoDir := filepath.Join(testDir, "debian-trixie-repo")
+	fixturesDir := filepath.Join(projectRoot, "test", "fixtures", "debs")
+
+	// Check if test packages exist
+	if _, err := os.Stat(filepath.Join(fixturesDir, "repogen-test_1.0.0_amd64.deb")); os.IsNotExist(err) {
+		t.Skip("Debian test packages not found, run build-test-packages.sh first")
+	}
+
+	// Generate unsigned repository (no GPG flags)
+	t.Log("Generating unsigned Debian repository for Trixie testing...")
+	repoGenBin := filepath.Join(projectRoot, "repogen")
+	cmd := exec.Command(repoGenBin, "generate",
+		"--input-dir", fixturesDir,
+		"--output-dir", repoDir,
+		"--codename", "testing",
+	)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to generate repository: %v\nOutput: %s", err, output)
+	}
+
+	// Verify InRelease exists for unsigned repository
+	inReleasePath := filepath.Join(repoDir, "dists", "testing", "InRelease")
+	if _, err := os.Stat(inReleasePath); os.IsNotExist(err) {
+		t.Errorf("InRelease file not found for unsigned repository: %s", inReleasePath)
+	}
+
+	// Verify Release exists (backward compatibility)
+	releasePath := filepath.Join(repoDir, "dists", "testing", "Release")
+	if _, err := os.Stat(releasePath); os.IsNotExist(err) {
+		t.Errorf("Release file not found: %s", releasePath)
+	}
+
+	// Verify Release.gpg does NOT exist (unsigned repo)
+	releaseGpgPath := filepath.Join(repoDir, "dists", "testing", "Release.gpg")
+	if _, err := os.Stat(releaseGpgPath); !os.IsNotExist(err) {
+		t.Errorf("Release.gpg should not exist for unsigned repository")
+	}
+
+	// Verify InRelease content matches Release content (unsigned)
+	inReleaseData, err := os.ReadFile(inReleasePath)
+	if err != nil {
+		t.Fatalf("Failed to read InRelease: %v", err)
+	}
+	releaseData, err := os.ReadFile(releasePath)
+	if err != nil {
+		t.Fatalf("Failed to read Release: %v", err)
+	}
+	if !bytes.Equal(inReleaseData, releaseData) {
+		t.Errorf("InRelease content should match Release content for unsigned repository")
+	}
+
+	// Test repository in Debian Trixie container
+	t.Log("Testing repository in Debian Trixie container...")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dockerCmd := exec.CommandContext(ctx, "docker", "run", "--rm",
+		"-v", fmt.Sprintf("%s:/repo:ro", repoDir),
+		"debian:trixie",
+		"bash", "-c", `
+set -e
+echo "deb [trusted=yes] file:///repo testing main" > /etc/apt/sources.list.d/test.list
+apt-get update
+apt-cache policy repogen-test repogen-utils repogen-gzipped
+apt-get install -y repogen-test repogen-utils repogen-gzipped
+repogen-test
+repogen-utils
+repogen-gzipped
+`,
+	)
+	dockerCmd.Stdout = os.Stdout
+	dockerCmd.Stderr = os.Stderr
+
+	if err := dockerCmd.Run(); err != nil {
+		t.Fatalf("Docker Trixie test failed: %v", err)
+	}
+
+	t.Log("✓ Debian Trixie repository test passed")
 }
 
 func testRPMRepository(t *testing.T, projectRoot, testDir string) {

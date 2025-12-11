@@ -14,6 +14,10 @@ Repogen is a CLI tool that generates static repository structures for multiple p
 - **Automatic Package Detection**: Scans directories and auto-detects package types using magic bytes
 - **Metadata Generation**: Creates all necessary index and metadata files for each repository type
 - **Repository Signing**: Signs repositories with GPG (Debian/RPM) or RSA (Alpine) keys
+- **Unsigned Repository Support**:
+  - Always generates InRelease files (required by Debian Trixie)
+  - InRelease contains Release content without signature for unsigned repos
+  - Compatible with `[trusted=yes]` apt option
 - **Static Output**: Generates static file structures that can be served by any web server
 - **Simple Component Structure**: Uses single component/pool structure for simplicity
 
@@ -117,9 +121,9 @@ Flags:
 repo/
 ├── dists/
 │   └── stable/
-│       ├── InRelease              # Cleartext signed Release
+│       ├── InRelease              # Cleartext signed Release (or unsigned copy for unsigned repos)
 │       ├── Release                # Main metadata
-│       ├── Release.gpg            # Detached GPG signature
+│       ├── Release.gpg            # Detached GPG signature (only for signed repos)
 │       └── main/
 │           └── binary-amd64/
 │               ├── Packages        # Package metadata
@@ -265,9 +269,9 @@ openssl genrsa -aes256 -out private.pem 2048
 ### Debian Repository Format
 
 Repogen generates Debian repositories following the standard format:
-- **InRelease**: Cleartext signed Release file (preferred)
+- **InRelease**: Cleartext signed Release file (preferred by modern apt). For unsigned repositories, contains the same content as Release file without signature wrapper.
 - **Release**: Contains metadata and checksums of all index files
-- **Release.gpg**: Detached signature of Release file
+- **Release.gpg**: Detached signature of Release file (only for signed repositories)
 - **Packages**: RFC 822-style package metadata
 - **pool/**: Organized by first letter of package name
 
@@ -417,7 +421,7 @@ Integration tests use Docker to:
 5. Verify successful installation
 
 **Tested Distributions:**
-- **Debian**: Debian Bookworm container
+- **Debian**: Debian Bookworm and Trixie containers
 - **RPM**: Fedora latest container
 - **Alpine**: Alpine latest container
 - **Homebrew**: Formula validation (local)
@@ -528,6 +532,14 @@ apt install repogen-test
 - Check file permissions (should be readable by web server)
 - Test with unsigned repository first (`[trusted=yes]` for apt)
 - Review web server logs for 404s
+
+### Debian Trixie requires InRelease files
+
+Even with `[trusted=yes]`, Debian Trixie expects InRelease files to exist. Repogen now automatically generates InRelease files for all repositories:
+- **Signed repositories**: InRelease contains cleartext signature
+- **Unsigned repositories**: InRelease contains Release content (no signature)
+
+This ensures compatibility with both old (Bookworm) and new (Trixie) Debian releases.
 
 ### Integration tests fail
 
