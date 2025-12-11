@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 
 	"github.com/ralt/repogen/internal/generator"
 	"github.com/ralt/repogen/internal/generator/apk"
@@ -57,6 +58,7 @@ structures with appropriate metadata files and signatures.`,
 	// Repository metadata flags
 	cmd.Flags().StringVar(&config.Origin, "origin", "", "Repository origin name")
 	cmd.Flags().StringVar(&config.Label, "label", "", "Repository label")
+	cmd.Flags().StringVar(&config.RepoName, "repo-name", "", "Repository name for Pacman database files and optional RPM .repo file naming")
 	cmd.Flags().StringVar(&config.Codename, "codename", "stable", "Codename for Debian repos")
 	cmd.Flags().StringVar(&config.Suite, "suite", "", "Suite for Debian repos (defaults to codename)")
 	cmd.Flags().StringSliceVar(&config.Components, "components", []string{"main"}, "Components for Debian repos")
@@ -105,6 +107,14 @@ func validateConfig(config *models.RepositoryConfig) error {
 			Type: models.ErrInvalidConfig,
 			Err:  fmt.Errorf("--gpg-key-url is required when both --base-url and --gpg-key are specified for signed RPM .repo files\n" +
 				"Example: --gpg-key-url 'https://example.com/repo/$releasever/$basearch/RPM-GPG-KEY-myrepo'"),
+		}
+	}
+
+	// Validate repo-name requirement for Pacman repositories
+	if hasPacmanPackages(config.InputDir) && config.RepoName == "" {
+		return &models.RepoGenError{
+			Type: models.ErrInvalidConfig,
+			Err:  fmt.Errorf("--repo-name is required for Pacman (Arch Linux) repository generation"),
 		}
 	}
 
@@ -234,4 +244,10 @@ func runGeneration(ctx context.Context, config *models.RepositoryConfig) error {
 	logrus.Infof("Output directory: %s", config.OutputDir)
 
 	return nil
+}
+
+// hasPacmanPackages checks if input directory contains Pacman packages
+func hasPacmanPackages(inputDir string) bool {
+	matches, _ := filepath.Glob(filepath.Join(inputDir, "*.pkg.tar.*"))
+	return len(matches) > 0
 }

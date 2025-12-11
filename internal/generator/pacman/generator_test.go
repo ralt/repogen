@@ -179,13 +179,13 @@ func TestGenerateUnsigned(t *testing.T) {
 	}
 
 	// Verify database exists
-	dbPath := filepath.Join(tmpDir, "x86_64", "test-repo.db.tar.zst")
+	dbPath := filepath.Join(tmpDir, "test-repo-x86_64.db.tar.zst")
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		t.Errorf("Database not created: %s", dbPath)
 	}
 
 	// Verify signature does NOT exist
-	sigPath := filepath.Join(tmpDir, "x86_64", "test-repo.db.tar.zst.sig")
+	sigPath := filepath.Join(tmpDir, "test-repo-x86_64.db.tar.zst.sig")
 	if _, err := os.Stat(sigPath); !os.IsNotExist(err) {
 		t.Errorf("Signature file should not exist for unsigned repository")
 	}

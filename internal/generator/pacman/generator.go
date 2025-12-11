@@ -83,9 +83,11 @@ func (g *Generator) generateForArch(ctx context.Context, config *models.Reposito
 		packages[i].Filename = filepath.Base(pkg.Filename)
 	}
 
-	// Generate database name from origin or default
+	// Generate database name from repo-name, origin, or default
 	dbName := "custom"
-	if config.Origin != "" {
+	if config.RepoName != "" {
+		dbName = sanitizeRepoName(config.RepoName)
+	} else if config.Origin != "" {
 		dbName = sanitizeRepoName(config.Origin)
 	}
 
@@ -95,8 +97,8 @@ func (g *Generator) generateForArch(ctx context.Context, config *models.Reposito
 		return fmt.Errorf("failed to generate database: %w", err)
 	}
 
-	// Write database file
-	dbPath := filepath.Join(archDir, fmt.Sprintf("%s.db.tar.zst", dbName))
+	// Write database file to output root with arch suffix
+	dbPath := filepath.Join(config.OutputDir, fmt.Sprintf("%s-%s.db.tar.zst", dbName, arch))
 	if err := utils.WriteFile(dbPath, dbData, 0644); err != nil {
 		return fmt.Errorf("failed to write database: %w", err)
 	}

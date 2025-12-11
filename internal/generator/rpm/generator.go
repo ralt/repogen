@@ -471,13 +471,18 @@ func getPackageVersion(config *models.RepositoryConfig, pkg models.Package) stri
 }
 
 // getRepoFileName determines the .repo filename
-// Priority: DistroVariant -> Sanitized Origin (fallback)
+// Priority: RepoName -> DistroVariant -> Sanitized Origin (fallback)
 func getRepoFileName(config *models.RepositoryConfig) string {
-	// Priority 1: DistroVariant (fedora, centos, rhel)
+	// Priority 1: RepoName (explicit)
+	if config.RepoName != "" {
+		return sanitizeRepoID(config.RepoName)
+	}
+
+	// Priority 2: DistroVariant (fedora, centos, rhel)
 	if config.DistroVariant != "" {
 		return config.DistroVariant
 	}
 
-	// Priority 2: Sanitized Origin
+	// Priority 3: Sanitized Origin
 	return sanitizeRepoID(config.Origin)
 }

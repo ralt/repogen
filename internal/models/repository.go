@@ -9,6 +9,7 @@ type RepositoryConfig struct {
 	// Repository metadata
 	Origin      string
 	Label       string
+	RepoName    string   // Repository name for Pacman .db files and optional RPM .repo naming
 	Codename    string   // For Debian
 	Suite       string   // For Debian
 	Components  []string // For Debian (main, contrib, etc.)
