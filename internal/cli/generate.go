@@ -8,6 +8,7 @@ import (
 	"github.com/ralt/repogen/internal/generator/apk"
 	"github.com/ralt/repogen/internal/generator/deb"
 	"github.com/ralt/repogen/internal/generator/homebrew"
+	"github.com/ralt/repogen/internal/generator/pacman"
 	"github.com/ralt/repogen/internal/generator/rpm"
 	"github.com/ralt/repogen/internal/models"
 	"github.com/ralt/repogen/internal/scanner"
@@ -145,6 +146,8 @@ func runGeneration(ctx context.Context, config *models.RepositoryConfig) error {
 			pkg, parseErr = rpm.ParsePackage(scanned.Path)
 		case scanner.TypeApk:
 			pkg, parseErr = apk.ParsePackage(scanned.Path)
+		case scanner.TypePacman:
+			pkg, parseErr = pacman.ParsePackage(scanned.Path)
 		case scanner.TypeHomebrewBottle:
 			// Homebrew bottles don't need parsing, use basic info
 			pkg = &models.Package{
@@ -200,6 +203,7 @@ func runGeneration(ctx context.Context, config *models.RepositoryConfig) error {
 	generators[scanner.TypeDeb] = deb.NewGenerator(gpgSigner)
 	generators[scanner.TypeRpm] = rpm.NewGenerator(gpgSigner)
 	generators[scanner.TypeApk] = apk.NewGenerator(rsaSigner, config.RSAKeyName)
+	generators[scanner.TypePacman] = pacman.NewGenerator(gpgSigner)
 	generators[scanner.TypeHomebrewBottle] = homebrew.NewGenerator(config.BaseURL)
 
 	for pkgType, packages := range packagesByType {

@@ -17,6 +17,12 @@ var (
 
 	// Gzip magic bytes (APK files are gzipped tars)
 	gzipMagic = []byte{0x1F, 0x8B}
+
+	// Zstandard magic bytes (Pacman packages .pkg.tar.zst)
+	zstdMagic = []byte{0x28, 0xB5, 0x2F, 0xFD}
+
+	// XZ magic bytes (Pacman packages .pkg.tar.xz)
+	xzMagic = []byte{0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00}
 )
 
 // DetectPackageType determines the package type based on magic bytes and file extension
@@ -52,6 +58,23 @@ func DetectPackageType(path string) (PackageType, error) {
 	// Check for Alpine APK (gzipped tar with .apk extension)
 	if bytes.HasPrefix(header, gzipMagic) && ext == ".apk" {
 		return TypeApk, nil
+	}
+
+	// Check for Pacman package (.pkg.tar.zst, .pkg.tar.xz, .pkg.tar.gz, .pkg.tar)
+	if strings.Contains(basename, ".pkg.tar.") {
+		// Check compression format
+		if bytes.HasPrefix(header, zstdMagic) || strings.HasSuffix(basename, ".pkg.tar.zst") {
+			return TypePacman, nil
+		}
+		if bytes.HasPrefix(header, xzMagic) || strings.HasSuffix(basename, ".pkg.tar.xz") {
+			return TypePacman, nil
+		}
+		if bytes.HasPrefix(header, gzipMagic) && strings.HasSuffix(basename, ".pkg.tar.gz") {
+			return TypePacman, nil
+		}
+		if strings.HasSuffix(basename, ".pkg.tar") {
+			return TypePacman, nil
+		}
 	}
 
 	// Check for Homebrew bottle (filename pattern)

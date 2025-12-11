@@ -17,6 +17,7 @@ Supported package types:
   - Debian/APT (.deb packages)
   - Yum/RPM (.rpm packages)
   - Alpine/APK (.apk packages)
+  - Arch/Pacman (.pkg.tar.* packages)
   - Homebrew (bottle files)`,
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
 			// Setup logging

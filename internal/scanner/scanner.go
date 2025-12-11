@@ -11,6 +11,7 @@ const (
 	TypeRpm
 	TypeApk
 	TypeHomebrewBottle
+	TypePacman
 )
 
 // String returns the string representation of PackageType
@@ -24,6 +25,8 @@ func (pt PackageType) String() string {
 		return "apk"
 	case TypeHomebrewBottle:
 		return "brew"
+	case TypePacman:
+		return "pacman"
 	default:
 		return "unknown"
 	}
