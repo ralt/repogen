@@ -72,6 +72,10 @@ func TestIntegration(t *testing.T) {
 	t.Run("Homebrew", func(t *testing.T) {
 		testHomebrewRepository(t, projectRoot, testDir)
 	})
+
+	t.Run("Pacman", func(t *testing.T) {
+		testPacmanRepository(t, projectRoot, testDir)
+	})
 }
 
 func testDebianRepository(t *testing.T, projectRoot, testDir string) {
@@ -658,6 +662,120 @@ func testHomebrewRepository(t *testing.T, projectRoot, testDir string) {
 	}
 
 	t.Log("✓ Homebrew repository test passed")
+}
+
+func testPacmanRepository(t *testing.T, projectRoot, testDir string) {
+	repoDir := filepath.Join(testDir, "pacman-repo")
+	fixturesDir := filepath.Join(projectRoot, "test", "fixtures", "pacman")
+
+	// Check if test packages exist
+	pkgs, _ := filepath.Glob(filepath.Join(fixturesDir, "*.pkg.tar.*"))
+	if len(pkgs) == 0 {
+		t.Skip("Pacman test packages not found, run build-test-packages.sh first")
+	}
+
+	// Generate repository
+	t.Logf("Generating Pacman repository with %d packages...", len(pkgs))
+	repoGenBin := filepath.Join(projectRoot, "repogen")
+	cmd := exec.Command(repoGenBin, "generate",
+		"--input-dir", fixturesDir,
+		"--output-dir", repoDir,
+		"--origin", "test-repo",
+		"--arch", "x86_64",
+	)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to generate repository: %v\nOutput: %s", err, output)
+	}
+
+	// Verify repository structure
+	expectedFiles := []string{
+		"x86_64/test-repo.db.tar.zst",
+	}
+	for _, file := range expectedFiles {
+		path := filepath.Join(repoDir, file)
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			t.Errorf("Expected file not found: %s", file)
+		}
+	}
+
+	// Verify packages were copied
+	copiedPkgs, _ := filepath.Glob(filepath.Join(repoDir, "x86_64", "*.pkg.tar.*"))
+	if len(copiedPkgs) == 0 {
+		t.Error("No packages found in generated repository")
+	}
+
+	// Verify database structure
+	t.Log("Verifying database structure...")
+	dbPath := filepath.Join(repoDir, "x86_64", "test-repo.db.tar.zst")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+	defer cancel()
+
+	// List database contents
+	zstdCmd := exec.CommandContext(ctx, "zstd", "-d", "-c", dbPath)
+	tarCmd := exec.CommandContext(ctx, "tar", "-t")
+
+	zstdOut, err := zstdCmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("Failed to create pipe: %v", err)
+	}
+	tarCmd.Stdin = zstdOut
+
+	output, err := tarCmd.CombinedOutput()
+	if zstdCmd.Start() != nil || tarCmd.Start() != nil {
+		t.Fatalf("Failed to start commands")
+	}
+
+	zstdCmd.Wait()
+	if err := tarCmd.Wait(); err != nil {
+		t.Fatalf("Failed to list database contents: %v\nOutput: %s", err, output)
+	}
+
+	content := string(output)
+	t.Logf("Database contents:\n%s", content)
+
+	// Verify database contains desc files
+	if !strings.Contains(content, "/desc") {
+		t.Error("Database missing desc files")
+	}
+
+	// Test repository in Docker (Arch Linux container)
+	t.Log("Testing repository in Arch Linux container...")
+	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dockerCmd := exec.CommandContext(ctx, "docker", "run", "--rm",
+		"-v", fmt.Sprintf("%s:/repo:ro", repoDir),
+		"archlinux:latest",
+		"bash", "-c", `
+set -e
+
+# Update package databases
+pacman -Sy --noconfirm
+
+# Add local repository (trusted, no signature verification)
+cat >> /etc/pacman.conf <<EOF
+
+[test-repo]
+SigLevel = Optional TrustAll
+Server = file:///repo/\$arch
+EOF
+
+# Update databases with new repo
+pacman -Sy
+
+# List available packages from test repo
+pacman -Sl test-repo
+`,
+	)
+	dockerCmd.Stdout = os.Stdout
+	dockerCmd.Stderr = os.Stderr
+
+	if err := dockerCmd.Run(); err != nil {
+		t.Fatalf("Docker test failed: %v", err)
+	}
+
+	t.Log("✓ Pacman repository test passed")
 }
 
 // Helper functions
