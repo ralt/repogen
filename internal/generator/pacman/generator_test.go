@@ -197,6 +197,71 @@ func TestGenerateUnsigned(t *testing.T) {
 	}
 }
 
+func TestGenerateCreatesDbFile(t *testing.T) {
+	// Setup temp directory
+	tmpDir, err := os.MkdirTemp("", "repogen-pacman-db-test-")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create generator without signer
+	gen := NewGenerator(nil)
+
+	config := &models.RepositoryConfig{
+		OutputDir: tmpDir,
+		RepoName:  "test-repo",
+		Arches:    []string{"x86_64"},
+	}
+
+	// Create a minimal test package
+	packages := []models.Package{
+		{
+			Name:         "test-pkg",
+			Version:      "1.0-1",
+			Architecture: "x86_64",
+			Description:  "Test package",
+			Filename:     filepath.Join(tmpDir, "test-pkg-1.0-1-x86_64.pkg.tar.zst"),
+			Size:         100,
+			MD5Sum:       "test-md5",
+			SHA256Sum:    "test-sha256",
+		},
+	}
+
+	// Create dummy package file
+	os.WriteFile(packages[0].Filename, []byte("dummy"), 0644)
+
+	// Generate repository
+	err = gen.Generate(context.Background(), config, packages)
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	// Verify .db.tar.zst exists
+	dbTarPath := filepath.Join(tmpDir, "x86_64", "test-repo.db.tar.zst")
+	dbTarInfo, err := os.Stat(dbTarPath)
+	if os.IsNotExist(err) {
+		t.Errorf("Database file not created: %s", dbTarPath)
+	}
+
+	// Verify .db file exists
+	dbPath := filepath.Join(tmpDir, "x86_64", "test-repo.db")
+	dbInfo, err := os.Stat(dbPath)
+	if os.IsNotExist(err) {
+		t.Errorf("Database .db file not created: %s", dbPath)
+	}
+
+	// Verify .db is a copy (same size as .db.tar.zst)
+	if dbInfo != nil && dbTarInfo != nil {
+		if dbInfo.Size() != dbTarInfo.Size() {
+			t.Errorf(".db file size (%d) doesn't match .db.tar.zst size (%d)", dbInfo.Size(), dbTarInfo.Size())
+		}
+		if dbInfo.Size() == 0 {
+			t.Error(".db file is empty")
+		}
+	}
+}
+
 func TestValidatePackages(t *testing.T) {
 	gen := &Generator{}
 

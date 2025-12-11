@@ -690,12 +690,22 @@ func testPacmanRepository(t *testing.T, projectRoot, testDir string) {
 	// Verify repository structure
 	expectedFiles := []string{
 		"x86_64/test-repo.db.tar.zst",
+		"x86_64/test-repo.db",
 	}
 	for _, file := range expectedFiles {
 		path := filepath.Join(repoDir, file)
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			t.Errorf("Expected file not found: %s", file)
 		}
+	}
+
+	// Verify .db file has content (not a symlink, but a copy)
+	dbPath := filepath.Join(repoDir, "x86_64", "test-repo.db")
+	dbInfo, err := os.Stat(dbPath)
+	if err != nil {
+		t.Errorf("Failed to stat .db file: %v", err)
+	} else if dbInfo.Size() == 0 {
+		t.Error(".db file is empty")
 	}
 
 	// Verify packages were copied
@@ -706,13 +716,13 @@ func testPacmanRepository(t *testing.T, projectRoot, testDir string) {
 
 	// Verify database structure
 	t.Log("Verifying database structure...")
-	dbPath := filepath.Join(repoDir, "x86_64", "test-repo.db.tar.zst")
+	dbTarPath := filepath.Join(repoDir, "x86_64", "test-repo.db.tar.zst")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
 	defer cancel()
 
 	// List database contents
-	zstdCmd := exec.CommandContext(ctx, "zstd", "-d", "-c", dbPath)
+	zstdCmd := exec.CommandContext(ctx, "zstd", "-d", "-c", dbTarPath)
 	tarCmd := exec.CommandContext(ctx, "tar", "-t")
 
 	zstdOut, err := zstdCmd.StdoutPipe()
@@ -721,14 +731,20 @@ func testPacmanRepository(t *testing.T, projectRoot, testDir string) {
 	}
 	tarCmd.Stdin = zstdOut
 
-	output, err := tarCmd.CombinedOutput()
-	if zstdCmd.Start() != nil || tarCmd.Start() != nil {
-		t.Fatalf("Failed to start commands")
+	// Start zstd command first
+	if err := zstdCmd.Start(); err != nil {
+		t.Fatalf("Failed to start zstd command: %v", err)
 	}
 
-	zstdCmd.Wait()
-	if err := tarCmd.Wait(); err != nil {
+	// Get tar output
+	output, err := tarCmd.CombinedOutput()
+	if err != nil {
 		t.Fatalf("Failed to list database contents: %v\nOutput: %s", err, output)
+	}
+
+	// Wait for zstd to finish
+	if err := zstdCmd.Wait(); err != nil {
+		t.Fatalf("zstd command failed: %v", err)
 	}
 
 	content := string(output)
@@ -775,7 +791,7 @@ pacman -S --noconfirm test-repo/nano
 # Verify installation
 echo "Verifying nano installation..."
 nano --version
-which nano
+command -v nano
 
 echo "✓ Package installed and verified successfully!"
 `,

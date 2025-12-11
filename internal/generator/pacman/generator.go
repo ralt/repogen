@@ -103,6 +103,12 @@ func (g *Generator) generateForArch(ctx context.Context, config *models.Reposito
 		return fmt.Errorf("failed to write database: %w", err)
 	}
 
+	// Also write .db file (copy of .db.tar.zst for Pacman compatibility)
+	dbCopyPath := filepath.Join(archDir, fmt.Sprintf("%s.db", dbName))
+	if err := utils.WriteFile(dbCopyPath, dbData, 0644); err != nil {
+		return fmt.Errorf("failed to write database copy: %w", err)
+	}
+
 	// Sign database if signer available
 	if g.signer != nil {
 		signature, err := g.signer.SignDetached(dbData)
@@ -113,6 +119,12 @@ func (g *Generator) generateForArch(ctx context.Context, config *models.Reposito
 		sigPath := fmt.Sprintf("%s.sig", dbPath)
 		if err := utils.WriteFile(sigPath, signature, 0644); err != nil {
 			return fmt.Errorf("failed to write database signature: %w", err)
+		}
+
+		// Also write .db.sig file (copy of .db.tar.zst.sig for Pacman compatibility)
+		sigCopyPath := filepath.Join(archDir, fmt.Sprintf("%s.db.sig", dbName))
+		if err := utils.WriteFile(sigCopyPath, signature, 0644); err != nil {
+			return fmt.Errorf("failed to write signature copy: %w", err)
 		}
 
 		// Sign each package file
