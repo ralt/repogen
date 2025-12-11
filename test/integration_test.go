@@ -71,7 +71,7 @@ func testDebianRepository(t *testing.T, projectRoot, testDir string) {
 	}
 
 	// Generate repository
-	t.Log("Generating Debian repository with 2 packages...")
+	t.Log("Generating Debian repository with 3 packages...")
 	repoGenBin := filepath.Join(projectRoot, "repogen")
 	cmd := exec.Command(repoGenBin, "generate",
 		"--input-dir", fixturesDir,
@@ -82,13 +82,14 @@ func testDebianRepository(t *testing.T, projectRoot, testDir string) {
 		t.Fatalf("Failed to generate repository: %v\nOutput: %s", err, output)
 	}
 
-	// Verify repository structure (2 packages)
+	// Verify repository structure (3 packages)
 	expectedFiles := []string{
 		"dists/testing/Release",
 		"dists/testing/main/binary-amd64/Packages",
 		"dists/testing/main/binary-amd64/Packages.gz",
 		"pool/main/r/repogen-test/repogen-test_1.0.0_amd64.deb",
 		"pool/main/r/repogen-utils/repogen-utils_2.0.0_amd64.deb",
+		"pool/main/r/repogen-gzipped/repogen-gzipped_3.0.0_amd64.deb",
 	}
 	for _, file := range expectedFiles {
 		path := filepath.Join(repoDir, file)
@@ -110,10 +111,11 @@ func testDebianRepository(t *testing.T, projectRoot, testDir string) {
 set -e
 echo "deb [trusted=yes] file:///repo testing main" > /etc/apt/sources.list.d/test.list
 apt-get update
-apt-cache policy repogen-test repogen-utils
-apt-get install -y repogen-test repogen-utils
+apt-cache policy repogen-test repogen-utils repogen-gzipped
+apt-get install -y repogen-test repogen-utils repogen-gzipped
 repogen-test
 repogen-utils
+repogen-gzipped
 `,
 	)
 	dockerCmd.Stdout = os.Stdout

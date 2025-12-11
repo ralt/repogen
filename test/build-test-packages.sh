@@ -80,7 +80,33 @@ EOF
 
     dpkg-deb --build "${DEB_BUILD_DIR}/testpkg2" "${FIXTURES_DIR}/debs/repogen-utils_2.0.0_amd64.deb"
 
-    echo "✓ Debian packages created (2)"
+    # Build third package: repogen-gzipped 3.0.0 (with gzip compression)
+    # This tests the .tar.gz format (older .deb packages use this)
+    mkdir -p "${DEB_BUILD_DIR}/testpkg3/DEBIAN"
+    mkdir -p "${DEB_BUILD_DIR}/testpkg3/usr/bin"
+
+    cat > "${DEB_BUILD_DIR}/testpkg3/DEBIAN/control" <<EOF
+Package: repogen-gzipped
+Version: 3.0.0
+Section: misc
+Priority: optional
+Architecture: amd64
+Maintainer: Repogen <test@example.com>
+Description: Test package with gzip compression
+ This package uses gzip compression (control.tar.gz)
+ to verify the parser handles both .tar.gz and .tar.xz formats.
+EOF
+
+    cat > "${DEB_BUILD_DIR}/testpkg3/usr/bin/repogen-gzipped" <<'EOF'
+#!/bin/sh
+echo "Repogen gzipped package v3.0.0 installed successfully!"
+EOF
+    chmod +x "${DEB_BUILD_DIR}/testpkg3/usr/bin/repogen-gzipped"
+
+    # Use -Zgzip to force gzip compression (creates control.tar.gz)
+    dpkg-deb -Zgzip --build "${DEB_BUILD_DIR}/testpkg3" "${FIXTURES_DIR}/debs/repogen-gzipped_3.0.0_amd64.deb"
+
+    echo "✓ Debian packages created (3)"
 }
 
 # ============================================================================
@@ -293,6 +319,7 @@ package_exists() {
 # Build packages (check if ANY package is missing before building)
 DEB_PACKAGE1="${FIXTURES_DIR}/debs/repogen-test_1.0.0_amd64.deb"
 DEB_PACKAGE2="${FIXTURES_DIR}/debs/repogen-utils_2.0.0_amd64.deb"
+DEB_PACKAGE3="${FIXTURES_DIR}/debs/repogen-gzipped_3.0.0_amd64.deb"
 RPM_PACKAGE1="${FIXTURES_DIR}/rpms/repogen-test-1.0.0-1.x86_64.rpm"
 RPM_PACKAGE2="${FIXTURES_DIR}/rpms/repogen-utils-2.0.0-1.x86_64.rpm"
 APK_PACKAGE1="${FIXTURES_DIR}/apks/repogen-test-1.0.0-r0.apk"
@@ -301,7 +328,7 @@ BOTTLE_PACKAGE1="${FIXTURES_DIR}/bottles/repogen-test--1.0.0.x86_64_linux.bottle
 BOTTLE_PACKAGE2="${FIXTURES_DIR}/bottles/repogen-utils--2.0.0.x86_64_linux.bottle.tar.gz"
 
 # Build Debian packages
-if ! (package_exists "$DEB_PACKAGE1" && package_exists "$DEB_PACKAGE2"); then
+if ! (package_exists "$DEB_PACKAGE1" && package_exists "$DEB_PACKAGE2" && package_exists "$DEB_PACKAGE3"); then
     if check_tool dpkg-deb; then
         build_deb
     else

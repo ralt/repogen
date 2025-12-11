@@ -75,7 +75,8 @@ func extractControl(path string) ([]byte, error) {
 		}
 
 		// Parse filename (first 16 bytes, space-padded)
-		filename := strings.TrimSpace(string(arHeader[0:16]))
+		// Also trim trailing slash that ar format may include
+		filename := strings.TrimRight(strings.TrimSpace(string(arHeader[0:16])), "/")
 
 		// Parse file size (bytes 48-58, decimal)
 		sizeStr := strings.TrimSpace(string(arHeader[48:58]))
