@@ -22,5 +22,6 @@ type RepositoryConfig struct {
 	RSAKeyName      string // For Alpine
 
 	// Type-specific options
-	BaseURL string // For Homebrew bottles
+	BaseURL       string // For Homebrew bottles and RPM .repo files
+	DistroVariant string // For RPM: fedora, centos, rhel (affects .repo defaults)
 }

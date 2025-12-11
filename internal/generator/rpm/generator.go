@@ -100,6 +100,21 @@ func (g *Generator) Generate(ctx context.Context, config *models.RepositoryConfi
 		logrus.Info("Repository signed successfully")
 	}
 
+	// Generate .repo file if BaseURL is provided
+	if config.BaseURL != "" {
+		repoFile, err := generateRepoFile(config, g.signer != nil)
+		if err != nil {
+			return fmt.Errorf("failed to generate .repo file: %w", err)
+		}
+
+		repoFilePath := filepath.Join(repoDir, fmt.Sprintf("%s.repo", sanitizeRepoID(config.Origin)))
+		if err := utils.WriteFile(repoFilePath, repoFile, 0644); err != nil {
+			return fmt.Errorf("failed to write .repo file: %w", err)
+		}
+
+		logrus.Infof("Repository configuration file written to: %s", repoFilePath)
+	}
+
 	logrus.Infof("RPM repository generated successfully (%d packages)", len(packages))
 	return nil
 }
@@ -304,4 +319,84 @@ func generateRepomdXML(primaryChecksum string, compressedSize, uncompressedSize 
 	}
 
 	return append([]byte(xml.Header), xmlBytes...), nil
+}
+
+// generateRepoFile creates a .repo configuration file for dnf/yum
+func generateRepoFile(config *models.RepositoryConfig, isSigned bool) ([]byte, error) {
+	repoID := sanitizeRepoID(config.Origin)
+	repoName := config.Label
+	if repoName == "" {
+		repoName = config.Origin
+	}
+
+	baseURL := config.BaseURL
+	if baseURL[len(baseURL)-1] != '/' {
+		baseURL += "/"
+	}
+
+	// Get distribution-specific defaults
+	distro := config.DistroVariant
+	if distro == "" {
+		distro = "fedora"
+	}
+
+	gpgCheck := "0"
+	repoGpgCheck := "0"
+	gpgKey := ""
+	additionalOptions := ""
+
+	if isSigned {
+		gpgCheck = "1"
+		gpgKey = fmt.Sprintf("gpgkey=%sRPM-GPG-KEY-%s\n", baseURL, repoID)
+
+		// Fedora typically enables repo_gpgcheck
+		if distro == "fedora" {
+			repoGpgCheck = "1"
+		}
+	}
+
+	// Distribution-specific options
+	switch distro {
+	case "rhel":
+		additionalOptions = "metadata_expire=86400"
+	case "centos":
+		additionalOptions = "metadata_expire=86400"
+	}
+
+	// Build the repo file content
+	repoContent := fmt.Sprintf(`[%s]
+name=%s
+baseurl=%s
+enabled=1
+gpgcheck=%s`, repoID, repoName, baseURL, gpgCheck)
+
+	if repoGpgCheck == "1" {
+		repoContent += fmt.Sprintf("\nrepo_gpgcheck=%s", repoGpgCheck)
+	}
+
+	if gpgKey != "" {
+		repoContent += fmt.Sprintf("\n%s", gpgKey)
+	}
+
+	if additionalOptions != "" {
+		repoContent += fmt.Sprintf("\n%s", additionalOptions)
+	}
+
+	return []byte(repoContent), nil
+}
+
+// sanitizeRepoID creates a valid repository ID from a string
+func sanitizeRepoID(s string) string {
+	// Convert to lowercase and replace spaces/special chars with hyphens
+	result := ""
+	for _, ch := range s {
+		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') {
+			result += string(ch)
+		} else if ch >= 'A' && ch <= 'Z' {
+			result += string(ch - 'A' + 'a')
+		} else if ch == ' ' || ch == '_' || ch == '.' {
+			result += "-"
+		}
+	}
+	return result
 }

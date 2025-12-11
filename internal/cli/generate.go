@@ -61,8 +61,9 @@ structures with appropriate metadata files and signatures.`,
 	cmd.Flags().StringSliceVar(&config.Components, "components", []string{"main"}, "Components for Debian repos")
 	cmd.Flags().StringSliceVar(&config.Arches, "arch", []string{"amd64"}, "Architectures to support")
 
-	// Homebrew specific
-	cmd.Flags().StringVar(&config.BaseURL, "base-url", "", "Base URL for Homebrew bottles")
+	// Type-specific options
+	cmd.Flags().StringVar(&config.BaseURL, "base-url", "", "Base URL for Homebrew bottles and RPM .repo files")
+	cmd.Flags().StringVar(&config.DistroVariant, "distro", "fedora", "Distribution variant for RPM repos (fedora, centos, rhel)")
 
 	return cmd
 }
