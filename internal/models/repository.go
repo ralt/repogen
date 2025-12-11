@@ -13,6 +13,7 @@ type RepositoryConfig struct {
 	Suite       string   // For Debian
 	Components  []string // For Debian (main, contrib, etc.)
 	Arches      []string // Architectures to support
+	Version     string   // For RPM: release version (e.g., "40" for Fedora 40)
 
 	// Signing
 	GPGKeyPath      string

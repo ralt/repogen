@@ -64,6 +64,7 @@ structures with appropriate metadata files and signatures.`,
 	// Type-specific options
 	cmd.Flags().StringVar(&config.BaseURL, "base-url", "", "Base URL for Homebrew bottles and RPM .repo files")
 	cmd.Flags().StringVar(&config.DistroVariant, "distro", "fedora", "Distribution variant for RPM repos (fedora, centos, rhel)")
+	cmd.Flags().StringVar(&config.Version, "version", "", "Release version for RPM repos (e.g., 40 for Fedora 40). Auto-detected from RPM metadata if not provided")
 
 	return cmd
 }

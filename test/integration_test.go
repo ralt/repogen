@@ -460,22 +460,38 @@ func testRPMRepository(t *testing.T, projectRoot, testDir string) {
 	cmd := exec.Command(repoGenBin, "generate",
 		"--input-dir", fixturesDir,
 		"--output-dir", repoDir,
+		"--base-url", "http://example.com/repo/",
+		"--distro", "fedora",
 	)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to generate repository: %v\nOutput: %s", err, output)
 	}
 
-	// Verify repository structure (2 packages)
+	// Verify repository structure (2 packages) - new version/arch structure
 	expectedFiles := []string{
-		"repodata/repomd.xml",
-		"Packages/repogen-test-1.0.0-1.x86_64.rpm",
-		"Packages/repogen-utils-2.0.0-1.x86_64.rpm",
+		"40/x86_64/repodata/repomd.xml",
+		"40/x86_64/Packages/repogen-test-1.0.0-1.x86_64.rpm",
+		"40/x86_64/Packages/repogen-utils-2.0.0-1.x86_64.rpm",
+		"fedora.repo",
 	}
 	for _, file := range expectedFiles {
 		path := filepath.Join(repoDir, file)
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			t.Errorf("Expected file not found: %s", file)
 		}
+	}
+
+	// Verify .repo file contains $releasever/$basearch
+	repoFileContent, err := os.ReadFile(filepath.Join(repoDir, "fedora.repo"))
+	if err != nil {
+		t.Fatalf("Failed to read .repo file: %v", err)
+	}
+	repoContent := string(repoFileContent)
+	if !strings.Contains(repoContent, "$releasever/$basearch") {
+		t.Errorf(".repo file missing $releasever/$basearch variables. Content:\n%s", repoContent)
+	}
+	if !strings.Contains(repoContent, "[") {
+		t.Errorf(".repo file appears to be malformed. Content:\n%s", repoContent)
 	}
 
 	// Test repository in Docker
@@ -491,7 +507,7 @@ set -e
 cat > /etc/yum.repos.d/test.repo <<EOF
 [test]
 name=Test Repository
-baseurl=file:///repo
+baseurl=file:///repo/40/x86_64
 enabled=1
 gpgcheck=0
 EOF

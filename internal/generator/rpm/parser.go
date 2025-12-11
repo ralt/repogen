@@ -3,6 +3,7 @@ package rpm
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/ralt/repogen/internal/models"
@@ -56,6 +57,7 @@ func ParsePackage(path string) (*models.Package, error) {
 	pkg.Metadata["Release"] = getStringTag(rpm, rpmutils.RELEASE)
 	pkg.Metadata["Group"] = getStringTag(rpm, rpmutils.GROUP)
 	pkg.Metadata["BuildTime"] = getIntTag(rpm, rpmutils.BUILDTIME)
+	pkg.Metadata["DistroVersion"] = getDistroVersion(rpm)
 
 	return pkg, nil
 }
@@ -118,4 +120,63 @@ func getStringSliceTag(rpm *rpmutils.Rpm, tag int) []string {
 		return result
 	}
 	return nil
+}
+
+// getDistroVersion extracts the distribution version from RPM metadata
+// It parses patterns like fc40 -> 40, el8 -> 8, el9 -> 9
+func getDistroVersion(rpm *rpmutils.Rpm) string {
+	// Try DISTURL first (1123 is the tag number for DISTURL)
+	disturl := getStringTag(rpm, 1123)
+	if disturl != "" {
+		if version := parseVersionFromDistro(disturl); version != "" {
+			return version
+		}
+	}
+
+	// Try DISTRIBUTION tag (1010 is the tag number for DISTRIBUTION)
+	dist := getStringTag(rpm, 1010)
+	if dist != "" {
+		if version := parseVersionFromDistro(dist); version != "" {
+			return version
+		}
+	}
+
+	// Try DISTTAG (1155)
+	disttag := getStringTag(rpm, 1155)
+	if disttag != "" {
+		if version := parseVersionFromDistro(disttag); version != "" {
+			return version
+		}
+	}
+
+	return ""
+}
+
+// parseVersionFromDistro parses version from distribution strings
+// Handles patterns: fc40 -> 40, el8 -> 8, .el9 -> 9, etc.
+func parseVersionFromDistro(distro string) string {
+	// Common patterns for Fedora, RHEL, CentOS
+	patterns := []string{
+		`fc(\d+)`,     // Fedora: fc40, fc39
+		`\.fc(\d+)`,   // Fedora with dot: .fc40
+		`el(\d+)`,     // RHEL/CentOS: el8, el9
+		`\.el(\d+)`,   // RHEL/CentOS with dot: .el8, .el9
+		`\.c(\d+)`,    // CentOS: .c8, .c9
+		`fedora(\d+)`, // Fedora: fedora40
+	}
+
+	for _, pattern := range patterns {
+		re := regexp.MustCompile(pattern)
+		if matches := re.FindStringSubmatch(distro); len(matches) > 1 {
+			return matches[1]
+		}
+	}
+
+	// If no pattern matched, try to extract the first sequence of digits
+	re := regexp.MustCompile(`(\d+)`)
+	if matches := re.FindStringSubmatch(distro); len(matches) > 0 {
+		return matches[1]
+	}
+
+	return ""
 }

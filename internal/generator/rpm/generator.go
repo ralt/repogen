@@ -20,6 +20,12 @@ type Generator struct {
 	signer signer.Signer
 }
 
+// versionArch represents a version/architecture combination
+type versionArch struct {
+	version string
+	arch    string
+}
+
 // NewGenerator creates a new RPM generator
 func NewGenerator(s signer.Signer) generator.Generator {
 	return &Generator{
@@ -31,10 +37,61 @@ func NewGenerator(s signer.Signer) generator.Generator {
 func (g *Generator) Generate(ctx context.Context, config *models.RepositoryConfig, packages []models.Package) error {
 	logrus.Info("Generating RPM repository...")
 
-	// Create directory structure
-	repoDir := config.OutputDir
-	repodataDir := filepath.Join(repoDir, "repodata")
-	packagesDir := filepath.Join(repoDir, "Packages")
+	// Group packages by version and architecture
+	versionArchPackages := make(map[versionArch][]models.Package)
+
+	for _, pkg := range packages {
+		version := getPackageVersion(config, pkg)
+		arch := pkg.Architecture
+		if arch == "" {
+			arch = "x86_64" // default architecture
+		}
+		key := versionArch{version: version, arch: arch}
+		versionArchPackages[key] = append(versionArchPackages[key], pkg)
+	}
+
+	// Generate repository for each version/arch combination
+	for versionArchKey, pkgs := range versionArchPackages {
+		if err := g.generateForVersionArch(ctx, config, versionArchKey.version, versionArchKey.arch, pkgs); err != nil {
+			return fmt.Errorf("failed to generate for %s/%s: %w", versionArchKey.version, versionArchKey.arch, err)
+		}
+	}
+
+	// Sign repositories if signer available (log after all versions/archs are done)
+	if g.signer != nil {
+		logrus.Info("Repository signed successfully")
+	}
+
+	// Generate .repo file if BaseURL is provided
+	if config.BaseURL != "" {
+		repoFile, err := generateRepoFile(config, g.signer != nil)
+		if err != nil {
+			return fmt.Errorf("failed to generate .repo file: %w", err)
+		}
+
+		// Use distro name for filename, fall back to sanitized origin
+		repoFileName := fmt.Sprintf("%s.repo", getRepoFileName(config))
+		repoFilePath := filepath.Join(config.OutputDir, repoFileName)
+
+		if err := utils.WriteFile(repoFilePath, repoFile, 0644); err != nil {
+			return fmt.Errorf("failed to write .repo file: %w", err)
+		}
+
+		logrus.Infof("Repository configuration file written to: %s", repoFilePath)
+	}
+
+	logrus.Infof("RPM repository generated successfully (%d packages)", len(packages))
+	return nil
+}
+
+// generateForVersionArch generates repository for a specific version/arch combination
+func (g *Generator) generateForVersionArch(ctx context.Context, config *models.RepositoryConfig, version, arch string, packages []models.Package) error {
+	logrus.Infof("Generating for version %s, architecture: %s", version, arch)
+
+	// Create directory structure: OutputDir/version/arch/
+	versionArchDir := filepath.Join(config.OutputDir, version, arch)
+	repodataDir := filepath.Join(versionArchDir, "repodata")
+	packagesDir := filepath.Join(versionArchDir, "Packages")
 
 	if err := utils.EnsureDir(repodataDir); err != nil {
 		return err
@@ -96,26 +153,9 @@ func (g *Generator) Generate(ctx context.Context, config *models.RepositoryConfi
 		if err := utils.WriteFile(sigPath, signature, 0644); err != nil {
 			return fmt.Errorf("failed to write repomd.xml.asc: %w", err)
 		}
-
-		logrus.Info("Repository signed successfully")
 	}
 
-	// Generate .repo file if BaseURL is provided
-	if config.BaseURL != "" {
-		repoFile, err := generateRepoFile(config, g.signer != nil)
-		if err != nil {
-			return fmt.Errorf("failed to generate .repo file: %w", err)
-		}
-
-		repoFilePath := filepath.Join(repoDir, fmt.Sprintf("%s.repo", sanitizeRepoID(config.Origin)))
-		if err := utils.WriteFile(repoFilePath, repoFile, 0644); err != nil {
-			return fmt.Errorf("failed to write .repo file: %w", err)
-		}
-
-		logrus.Infof("Repository configuration file written to: %s", repoFilePath)
-	}
-
-	logrus.Infof("RPM repository generated successfully (%d packages)", len(packages))
+	logrus.Infof("Generated repository for %s/%s (%d packages)", version, arch, len(packages))
 	return nil
 }
 
@@ -333,6 +373,8 @@ func generateRepoFile(config *models.RepositoryConfig, isSigned bool) ([]byte, e
 	if baseURL[len(baseURL)-1] != '/' {
 		baseURL += "/"
 	}
+	// Add $releasever/$basearch variables for yum/dnf substitution
+	baseURL = fmt.Sprintf("%s$releasever/$basearch", baseURL)
 
 	// Get distribution-specific defaults
 	distro := config.DistroVariant
@@ -399,4 +441,42 @@ func sanitizeRepoID(s string) string {
 		}
 	}
 	return result
+}
+
+// getPackageVersion determines the version for a package
+// Priority: CLI flag -> RPM metadata -> DistroVariant default -> "40"
+func getPackageVersion(config *models.RepositoryConfig, pkg models.Package) string {
+	// Priority 1: Config.Version (explicit CLI flag)
+	if config.Version != "" {
+		return config.Version
+	}
+
+	// Priority 2: Package metadata
+	if ver, ok := pkg.Metadata["DistroVersion"].(string); ok && ver != "" {
+		return ver
+	}
+
+	// Priority 3: Default based on DistroVariant
+	switch config.DistroVariant {
+	case "fedora":
+		return "40" // Latest Fedora
+	case "centos":
+		return "9" // CentOS Stream 9
+	case "rhel":
+		return "9" // RHEL 9
+	default:
+		return "40"
+	}
+}
+
+// getRepoFileName determines the .repo filename
+// Priority: DistroVariant -> Sanitized Origin (fallback)
+func getRepoFileName(config *models.RepositoryConfig) string {
+	// Priority 1: DistroVariant (fedora, centos, rhel)
+	if config.DistroVariant != "" {
+		return config.DistroVariant
+	}
+
+	// Priority 2: Sanitized Origin
+	return sanitizeRepoID(config.Origin)
 }
