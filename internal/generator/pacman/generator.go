@@ -97,8 +97,8 @@ func (g *Generator) generateForArch(ctx context.Context, config *models.Reposito
 		return fmt.Errorf("failed to generate database: %w", err)
 	}
 
-	// Write database file to output root with arch suffix
-	dbPath := filepath.Join(config.OutputDir, fmt.Sprintf("%s-%s.db.tar.zst", dbName, arch))
+	// Write database file to arch directory without arch suffix
+	dbPath := filepath.Join(archDir, fmt.Sprintf("%s.db.tar.zst", dbName))
 	if err := utils.WriteFile(dbPath, dbData, 0644); err != nil {
 		return fmt.Errorf("failed to write database: %w", err)
 	}

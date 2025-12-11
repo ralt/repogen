@@ -689,7 +689,7 @@ func testPacmanRepository(t *testing.T, projectRoot, testDir string) {
 
 	// Verify repository structure
 	expectedFiles := []string{
-		"test-repo-x86_64.db.tar.zst",
+		"x86_64/test-repo.db.tar.zst",
 	}
 	for _, file := range expectedFiles {
 		path := filepath.Join(repoDir, file)
@@ -706,7 +706,7 @@ func testPacmanRepository(t *testing.T, projectRoot, testDir string) {
 
 	// Verify database structure
 	t.Log("Verifying database structure...")
-	dbPath := filepath.Join(repoDir, "test-repo-x86_64.db.tar.zst")
+	dbPath := filepath.Join(repoDir, "x86_64", "test-repo.db.tar.zst")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
 	defer cancel()
