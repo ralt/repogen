@@ -137,18 +137,50 @@ func (s *GPGSigner) SignDetached(data []byte) ([]byte, error) {
 }
 
 // SignDetachedBinary creates a detached binary signature (for Pacman .sig files)
-// Pacman expects binary OpenPGP signatures, not ASCII-armored ones
+// Pacman expects binary OpenPGP signatures in old packet format, not ASCII-armored ones
+// We use GPG command-line to ensure compatibility with Pacman's expectations
 func (s *GPGSigner) SignDetachedBinary(data []byte) ([]byte, error) {
-	var buf bytes.Buffer
-
-	err := openpgp.DetachSign(&buf, s.entity, bytes.NewReader(data), &packet.Config{
-		DefaultHash: crypto.SHA512,
-	})
+	// Create a temporary GPG home directory
+	tmpDir, err := os.MkdirTemp("", "repogen-gpg-*")
 	if err != nil {
-		return nil, fmt.Errorf("failed to create binary detached signature: %w", err)
+		return nil, fmt.Errorf("failed to create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Import the key
+	keyPath, err := filepath.Abs(s.keyPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get absolute key path: %w", err)
 	}
 
-	return buf.Bytes(), nil
+	cmd := exec.Command("gpg", "--homedir", tmpDir, "--import", keyPath)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("failed to import key: %w\nOutput: %s", err, output)
+	}
+
+	// Create temp file for input data
+	inputFile := filepath.Join(tmpDir, "input.dat")
+	if err := os.WriteFile(inputFile, data, 0600); err != nil {
+		return nil, fmt.Errorf("failed to write input file: %w", err)
+	}
+
+	// Sign with GPG - use --detach-sign for binary signature
+	// --no-armor ensures binary output (old packet format compatible with Pacman)
+	outputFile := filepath.Join(tmpDir, "output.sig")
+	cmd = exec.Command("gpg", "--homedir", tmpDir, "--detach-sign",
+		"--digest-algo", "SHA512", "--batch", "--yes",
+		"--output", outputFile, inputFile)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("failed to sign with GPG: %w\nOutput: %s", err, output)
+	}
+
+	// Read the signature
+	signature, err := os.ReadFile(outputFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read signature file: %w", err)
+	}
+
+	return signature, nil
 }
 
 // GetPublicKey returns the public key in armored format
