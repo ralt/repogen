@@ -50,16 +50,31 @@ func (g *Generator) Generate(ctx context.Context, config *models.RepositoryConfi
 
 	// Generate formulas
 	for pkgName, bottles := range bottlesByPkg {
-		// Copy bottles
-		for _, bottle := range bottles {
+		// Copy bottles and recalculate checksums
+		updatedBottles := make([]models.Package, len(bottles))
+		for i, bottle := range bottles {
 			dstPath := filepath.Join(bottlesDir, filepath.Base(bottle.Filename))
 			if err := utils.CopyFile(bottle.Filename, dstPath); err != nil {
 				return fmt.Errorf("failed to copy %s: %w", bottle.Filename, err)
 			}
+
+			// Recalculate checksums on the copied file to ensure accuracy
+			checksums, err := utils.CalculateChecksums(dstPath)
+			if err != nil {
+				return fmt.Errorf("failed to calculate checksums for %s: %w", filepath.Base(bottle.Filename), err)
+			}
+
+			// Update bottle with copied file information
+			updatedBottle := bottle
+			updatedBottle.Size = checksums.Size
+			updatedBottle.MD5Sum = checksums.MD5
+			updatedBottle.SHA1Sum = checksums.SHA1
+			updatedBottle.SHA256Sum = checksums.SHA256
+			updatedBottles[i] = updatedBottle
 		}
 
-		// Generate formula
-		formula, err := g.generateFormula(pkgName, bottles)
+		// Generate formula using updated bottles with correct checksums
+		formula, err := g.generateFormula(pkgName, updatedBottles)
 		if err != nil {
 			return fmt.Errorf("failed to generate formula for %s: %w", pkgName, err)
 		}

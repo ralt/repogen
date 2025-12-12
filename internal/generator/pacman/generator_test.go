@@ -41,13 +41,13 @@ func TestGenerateDescFile(t *testing.T) {
 
 	// Check required fields
 	requiredFields := map[string]string{
-		"%FILENAME%": "test-package-1.0.0-1-x86_64.pkg.tar.zst",
-		"%NAME%":     "test-package",
-		"%VERSION%":  "1.0.0-1",
-		"%DESC%":     "Test package description",
-		"%CSIZE%":    "12345",
-		"%ISIZE%":    "54321",
-		"%MD5SUM%":   "abc123",
+		"%FILENAME%":  "test-package-1.0.0-1-x86_64.pkg.tar.zst",
+		"%NAME%":      "test-package",
+		"%VERSION%":   "1.0.0-1",
+		"%DESC%":      "Test package description",
+		"%CSIZE%":     "12345",
+		"%ISIZE%":     "54321",
+		"%MD5SUM%":    "abc123",
 		"%SHA256SUM%": "def456",
 		"%ARCH%":      "x86_64",
 		"%BUILDDATE%": "1234567890",

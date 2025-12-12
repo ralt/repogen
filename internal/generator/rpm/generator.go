@@ -100,13 +100,24 @@ func (g *Generator) generateForVersionArch(ctx context.Context, config *models.R
 		return err
 	}
 
-	// Copy RPM files to Packages directory
+	// Copy RPM files to Packages directory and recalculate checksums
 	for i := range packages {
 		pkg := &packages[i]
 		dstPath := filepath.Join(packagesDir, filepath.Base(pkg.Filename))
 		if err := utils.CopyFile(pkg.Filename, dstPath); err != nil {
 			return fmt.Errorf("failed to copy %s: %w", pkg.Filename, err)
 		}
+
+		// Recalculate checksums on the copied file to ensure accuracy
+		checksums, err := utils.CalculateChecksums(dstPath)
+		if err != nil {
+			return fmt.Errorf("failed to calculate checksums for %s: %w", filepath.Base(pkg.Filename), err)
+		}
+		pkg.Size = checksums.Size
+		pkg.MD5Sum = checksums.MD5
+		pkg.SHA1Sum = checksums.SHA1
+		pkg.SHA256Sum = checksums.SHA256
+
 		pkg.Filename = fmt.Sprintf("Packages/%s", filepath.Base(pkg.Filename))
 	}
 
@@ -177,32 +188,32 @@ func (g *Generator) GetSupportedType() scanner.PackageType {
 // XML structures for metadata
 
 type metadata struct {
-	XMLName       xml.Name  `xml:"metadata"`
-	Xmlns         string    `xml:"xmlns,attr"`
-	XmlnsRpm      string    `xml:"xmlns:rpm,attr"`
-	PackagesCount int       `xml:"packages,attr"`
-	Packages      []xmlPkg  `xml:"package"`
+	XMLName       xml.Name `xml:"metadata"`
+	Xmlns         string   `xml:"xmlns,attr"`
+	XmlnsRpm      string   `xml:"xmlns:rpm,attr"`
+	PackagesCount int      `xml:"packages,attr"`
+	Packages      []xmlPkg `xml:"package"`
 }
 
 type xmlPkg struct {
-	Type      string     `xml:"type,attr"`
-	Name      string     `xml:"name"`
-	Arch      string     `xml:"arch"`
-	Version   xmlVersion `xml:"version"`
-	Checksum  xmlChecksum `xml:"checksum"`
-	Summary   string     `xml:"summary"`
-	Packager  string     `xml:"packager,omitempty"`
-	URL       string     `xml:"url,omitempty"`
-	Time      xmlTime    `xml:"time"`
-	Size      xmlSize    `xml:"size"`
-	Location  xmlLocation `xml:"location"`
-	Format    xmlFormat  `xml:"format"`
+	Type     string      `xml:"type,attr"`
+	Name     string      `xml:"name"`
+	Arch     string      `xml:"arch"`
+	Version  xmlVersion  `xml:"version"`
+	Checksum xmlChecksum `xml:"checksum"`
+	Summary  string      `xml:"summary"`
+	Packager string      `xml:"packager,omitempty"`
+	URL      string      `xml:"url,omitempty"`
+	Time     xmlTime     `xml:"time"`
+	Size     xmlSize     `xml:"size"`
+	Location xmlLocation `xml:"location"`
+	Format   xmlFormat   `xml:"format"`
 }
 
 type xmlVersion struct {
-	Epoch   string `xml:"epoch,attr"`
-	Ver     string `xml:"ver,attr"`
-	Rel     string `xml:"rel,attr"`
+	Epoch string `xml:"epoch,attr"`
+	Ver   string `xml:"ver,attr"`
+	Rel   string `xml:"rel,attr"`
 }
 
 type xmlChecksum struct {
@@ -227,8 +238,8 @@ type xmlLocation struct {
 }
 
 type xmlFormat struct {
-	License string   `xml:"rpm:license,omitempty"`
-	Group   string   `xml:"rpm:group,omitempty"`
+	License string `xml:"rpm:license,omitempty"`
+	Group   string `xml:"rpm:group,omitempty"`
 }
 
 func generatePrimaryXML(packages []models.Package) ([]byte, error) {
@@ -307,13 +318,13 @@ type repomd struct {
 }
 
 type repomdData struct {
-	Type         string           `xml:"type,attr"`
-	Checksum     repomdChecksum   `xml:"checksum"`
-	OpenChecksum repomdChecksum   `xml:"open-checksum"`
-	Location     repomdLocation   `xml:"location"`
-	Timestamp    int64            `xml:"timestamp"`
-	Size         int64            `xml:"size"`
-	OpenSize     int64            `xml:"open-size"`
+	Type         string         `xml:"type,attr"`
+	Checksum     repomdChecksum `xml:"checksum"`
+	OpenChecksum repomdChecksum `xml:"open-checksum"`
+	Location     repomdLocation `xml:"location"`
+	Timestamp    int64          `xml:"timestamp"`
+	Size         int64          `xml:"size"`
+	OpenSize     int64          `xml:"open-size"`
 }
 
 type repomdChecksum struct {

@@ -71,13 +71,24 @@ func (g *Generator) generateForArch(ctx context.Context, config *models.Reposito
 		return err
 	}
 
-	// Copy APK files to architecture directory
+	// Copy APK files to architecture directory and recalculate checksums
 	for i := range packages {
 		pkg := &packages[i]
 		dstPath := filepath.Join(archDir, filepath.Base(pkg.Filename))
 		if err := utils.CopyFile(pkg.Filename, dstPath); err != nil {
 			return fmt.Errorf("failed to copy %s: %w", pkg.Filename, err)
 		}
+
+		// Recalculate checksums on the copied file to ensure accuracy
+		checksums, err := utils.CalculateChecksums(dstPath)
+		if err != nil {
+			return fmt.Errorf("failed to calculate checksums for %s: %w", filepath.Base(pkg.Filename), err)
+		}
+		pkg.Size = checksums.Size
+		pkg.MD5Sum = checksums.MD5
+		pkg.SHA1Sum = checksums.SHA1
+		pkg.SHA256Sum = checksums.SHA256
+
 		pkg.Filename = filepath.Base(pkg.Filename)
 	}
 

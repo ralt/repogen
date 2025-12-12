@@ -13,10 +13,10 @@ type Package struct {
 	Dependencies []string
 
 	// File information
-	Filename string
-	Size     int64
-	MD5Sum   string
-	SHA1Sum  string
+	Filename  string
+	Size      int64
+	MD5Sum    string
+	SHA1Sum   string
 	SHA256Sum string
 	SHA512Sum string
 

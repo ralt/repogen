@@ -96,6 +96,16 @@ func (g *Generator) generateForArch(ctx context.Context, config *models.Reposito
 			return fmt.Errorf("failed to copy %s: %w", pkg.Filename, err)
 		}
 
+		// Recalculate checksums on the copied file to ensure accuracy
+		checksums, err := utils.CalculateChecksums(dstPath)
+		if err != nil {
+			return fmt.Errorf("failed to calculate checksums for %s: %w", filepath.Base(pkg.Filename), err)
+		}
+		pkg.Size = checksums.Size
+		pkg.MD5Sum = checksums.MD5
+		pkg.SHA1Sum = checksums.SHA1
+		pkg.SHA256Sum = checksums.SHA256
+
 		// Update filename to be relative to repository root
 		relPath, err := filepath.Rel(config.OutputDir, dstPath)
 		if err != nil {

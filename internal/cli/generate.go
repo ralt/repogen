@@ -105,7 +105,7 @@ func validateConfig(config *models.RepositoryConfig) error {
 	if config.BaseURL != "" && config.GPGKeyPath != "" && config.GPGKeyURL == "" {
 		return &models.RepoGenError{
 			Type: models.ErrInvalidConfig,
-			Err:  fmt.Errorf("--gpg-key-url is required when both --base-url and --gpg-key are specified for signed RPM .repo files\n" +
+			Err: fmt.Errorf("--gpg-key-url is required when both --base-url and --gpg-key are specified for signed RPM .repo files\n" +
 				"Example: --gpg-key-url 'https://example.com/repo/$releasever/$basearch/RPM-GPG-KEY-myrepo'"),
 		}
 	}

@@ -70,7 +70,7 @@ func (g *Generator) generateForArch(ctx context.Context, config *models.Reposito
 		return err
 	}
 
-	// Copy packages to arch directory
+	// Copy packages to arch directory and recalculate checksums
 	for i, pkg := range packages {
 		srcPath := pkg.Filename
 		dstPath := filepath.Join(archDir, filepath.Base(pkg.Filename))
@@ -79,8 +79,18 @@ func (g *Generator) generateForArch(ctx context.Context, config *models.Reposito
 			return fmt.Errorf("failed to copy package: %w", err)
 		}
 
-		// Update filename to just the basename for database
+		// Recalculate checksums on the copied file to ensure accuracy
+		checksums, err := utils.CalculateChecksums(dstPath)
+		if err != nil {
+			return fmt.Errorf("failed to calculate checksums for %s: %w", filepath.Base(pkg.Filename), err)
+		}
+
+		// Update package with copied file information
 		packages[i].Filename = filepath.Base(pkg.Filename)
+		packages[i].Size = checksums.Size
+		packages[i].MD5Sum = checksums.MD5
+		packages[i].SHA256Sum = checksums.SHA256
+		packages[i].SHA512Sum = checksums.SHA512
 	}
 
 	// Generate database name from repo-name, origin, or default

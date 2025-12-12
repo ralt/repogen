@@ -7,21 +7,21 @@ type RepositoryConfig struct {
 	OutputDir string
 
 	// Repository metadata
-	Origin      string
-	Label       string
-	RepoName    string   // Repository name for Pacman .db files and optional RPM .repo naming
-	Codename    string   // For Debian
-	Suite       string   // For Debian
-	Components  []string // For Debian (main, contrib, etc.)
-	Arches      []string // Architectures to support
-	Version     string   // For RPM: release version (e.g., "40" for Fedora 40)
+	Origin     string
+	Label      string
+	RepoName   string   // Repository name for Pacman .db files and optional RPM .repo naming
+	Codename   string   // For Debian
+	Suite      string   // For Debian
+	Components []string // For Debian (main, contrib, etc.)
+	Arches     []string // Architectures to support
+	Version    string   // For RPM: release version (e.g., "40" for Fedora 40)
 
 	// Signing
-	GPGKeyPath      string
-	GPGPassphrase   string
-	RSAKeyPath      string
-	RSAPassphrase   string
-	RSAKeyName      string // For Alpine
+	GPGKeyPath    string
+	GPGPassphrase string
+	RSAKeyPath    string
+	RSAPassphrase string
+	RSAKeyName    string // For Alpine
 
 	// Type-specific options
 	BaseURL       string // For Homebrew bottles and RPM .repo files

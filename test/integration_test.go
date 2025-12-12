@@ -76,6 +76,10 @@ func TestIntegration(t *testing.T) {
 	t.Run("Pacman", func(t *testing.T) {
 		testPacmanRepository(t, projectRoot, testDir)
 	})
+
+	t.Run("ChecksumVerification", func(t *testing.T) {
+		testChecksumVerification(t, projectRoot, testDir)
+	})
 }
 
 func testDebianRepository(t *testing.T, projectRoot, testDir string) {
@@ -642,7 +646,7 @@ func testHomebrewRepository(t *testing.T, projectRoot, testDir string) {
 
 	// Verify both formula files are valid Ruby
 	formulas := map[string][]string{
-		"repogen-test": {"class RepogenTest < Formula", "desc", "version"},
+		"repogen-test":  {"class RepogenTest < Formula", "desc", "version"},
 		"repogen-utils": {"class RepogenUtils < Formula", "desc", "version"},
 	}
 
@@ -806,6 +810,224 @@ echo "✓ Package installed and verified successfully!"
 	t.Log("✓ Pacman repository test passed")
 }
 
+func testChecksumVerification(t *testing.T, projectRoot, testDir string) {
+	// Test checksum verification for different package types
+	t.Run("Pacman", func(t *testing.T) {
+		verifyPacmanChecksums(t, projectRoot, testDir)
+	})
+
+	t.Run("Debian", func(t *testing.T) {
+		verifyDebianChecksums(t, projectRoot, testDir)
+	})
+
+	t.Run("RPM", func(t *testing.T) {
+		verifyRPMChecksums(t, projectRoot, testDir)
+	})
+
+	t.Run("APK", func(t *testing.T) {
+		verifyAPKChecksums(t, projectRoot, testDir)
+	})
+}
+
+func verifyPacmanChecksums(t *testing.T, projectRoot, testDir string) {
+	repoDir := filepath.Join(testDir, "checksum-pacman-repo")
+	fixturesDir := filepath.Join(projectRoot, "test", "fixtures", "pacman")
+
+	// Check if test packages exist
+	pkgs, _ := filepath.Glob(filepath.Join(fixturesDir, "*.pkg.tar.*"))
+	if len(pkgs) == 0 {
+		t.Skip("Pacman test packages not found")
+	}
+
+	// Generate repository
+	t.Log("Generating Pacman repository for checksum verification...")
+	repoGenBin := filepath.Join(projectRoot, "repogen")
+	cmd := exec.Command(repoGenBin, "generate",
+		"--input-dir", fixturesDir,
+		"--output-dir", repoDir,
+		"--repo-name", "test-repo",
+		"--arch", "x86_64",
+	)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to generate repository: %v\nOutput: %s", err, output)
+	}
+
+	// Extract and parse database
+	dbPath := filepath.Join(repoDir, "x86_64", "test-repo.db.tar.zst")
+	checksums, err := extractPacmanChecksums(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to extract checksums from database: %v", err)
+	}
+
+	// Verify checksums match actual files
+	for filename, expectedMD5 := range checksums {
+		pkgPath := filepath.Join(repoDir, "x86_64", filename)
+		actualMD5, err := calculateMD5(pkgPath)
+		if err != nil {
+			t.Errorf("Failed to calculate checksum for %s: %v", filename, err)
+			continue
+		}
+
+		if actualMD5 != expectedMD5 {
+			t.Errorf("Checksum mismatch for %s:\n  Expected (from DB): %s\n  Actual (from file): %s",
+				filename, expectedMD5, actualMD5)
+		} else {
+			t.Logf("✓ Checksum verified for %s", filename)
+		}
+	}
+}
+
+func verifyDebianChecksums(t *testing.T, projectRoot, testDir string) {
+	repoDir := filepath.Join(testDir, "checksum-deb-repo")
+	fixturesDir := filepath.Join(projectRoot, "test", "fixtures", "debs")
+
+	// Check if test packages exist
+	if _, err := os.Stat(filepath.Join(fixturesDir, "repogen-test_1.0.0_amd64.deb")); os.IsNotExist(err) {
+		t.Skip("Debian test packages not found")
+	}
+
+	// Generate repository
+	t.Log("Generating Debian repository for checksum verification...")
+	repoGenBin := filepath.Join(projectRoot, "repogen")
+	cmd := exec.Command(repoGenBin, "generate",
+		"--input-dir", fixturesDir,
+		"--output-dir", repoDir,
+		"--origin", "testing",
+		"--arch", "amd64",
+	)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to generate repository: %v\nOutput: %s", err, output)
+	}
+
+	// Parse Packages file
+	packagesPath := filepath.Join(repoDir, "dists", "stable", "main", "binary-amd64", "Packages")
+	checksums, err := extractDebianChecksums(packagesPath)
+	if err != nil {
+		t.Fatalf("Failed to extract checksums from Packages file: %v", err)
+	}
+
+	// Verify checksums match actual files
+	for relPath, expectedMD5 := range checksums {
+		pkgPath := filepath.Join(repoDir, relPath)
+		actualMD5, err := calculateMD5(pkgPath)
+		if err != nil {
+			t.Errorf("Failed to calculate checksum for %s: %v", relPath, err)
+			continue
+		}
+
+		if actualMD5 != expectedMD5 {
+			t.Errorf("Checksum mismatch for %s:\n  Expected (from Packages): %s\n  Actual (from file): %s",
+				relPath, expectedMD5, actualMD5)
+		} else {
+			t.Logf("✓ Checksum verified for %s", relPath)
+		}
+	}
+}
+
+func verifyRPMChecksums(t *testing.T, projectRoot, testDir string) {
+	repoDir := filepath.Join(testDir, "checksum-rpm-repo")
+	fixturesDir := filepath.Join(projectRoot, "test", "fixtures", "rpms")
+
+	// Check if test packages exist
+	rpms, _ := filepath.Glob(filepath.Join(fixturesDir, "*.rpm"))
+	if len(rpms) == 0 {
+		t.Skip("RPM test packages not found")
+	}
+
+	// Generate repository
+	t.Log("Generating RPM repository for checksum verification...")
+	repoGenBin := filepath.Join(projectRoot, "repogen")
+	cmd := exec.Command(repoGenBin, "generate",
+		"--input-dir", fixturesDir,
+		"--output-dir", repoDir,
+	)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to generate repository: %v\nOutput: %s", err, output)
+	}
+
+	// Find repodata directory (RPM repos have nested structure with OS version and arch)
+	repodataDir, err := findRepodataDir(repoDir)
+	if err != nil {
+		t.Fatalf("Failed to find repodata directory: %v", err)
+	}
+
+	// Parse primary.xml
+	primaryXML, err := findPrimaryXML(repodataDir)
+	if err != nil {
+		t.Fatalf("Failed to find primary.xml: %v", err)
+	}
+
+	checksums, err := extractRPMChecksums(primaryXML)
+	if err != nil {
+		t.Fatalf("Failed to extract checksums from primary.xml: %v", err)
+	}
+
+	// Verify checksums match actual files (Packages dir is next to repodata)
+	packagesDir := filepath.Join(filepath.Dir(repodataDir), "Packages")
+	for filename, expectedSHA256 := range checksums {
+		pkgPath := filepath.Join(packagesDir, filename)
+		actualSHA256, err := calculateSHA256(pkgPath)
+		if err != nil {
+			t.Errorf("Failed to calculate checksum for %s: %v", filename, err)
+			continue
+		}
+
+		if actualSHA256 != expectedSHA256 {
+			t.Errorf("Checksum mismatch for %s:\n  Expected (from primary.xml): %s\n  Actual (from file): %s",
+				filename, expectedSHA256, actualSHA256)
+		} else {
+			t.Logf("✓ Checksum verified for %s", filename)
+		}
+	}
+}
+
+func verifyAPKChecksums(t *testing.T, projectRoot, testDir string) {
+	repoDir := filepath.Join(testDir, "checksum-apk-repo")
+	fixturesDir := filepath.Join(projectRoot, "test", "fixtures", "apks")
+
+	// Check if test packages exist
+	apks, _ := filepath.Glob(filepath.Join(fixturesDir, "*.apk"))
+	if len(apks) == 0 {
+		t.Skip("APK test packages not found")
+	}
+
+	// Generate repository
+	t.Log("Generating APK repository for checksum verification...")
+	repoGenBin := filepath.Join(projectRoot, "repogen")
+	cmd := exec.Command(repoGenBin, "generate",
+		"--input-dir", fixturesDir,
+		"--output-dir", repoDir,
+		"--arch", "x86_64",
+	)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to generate repository: %v\nOutput: %s", err, output)
+	}
+
+	// Parse APKINDEX
+	apkindexPath := filepath.Join(repoDir, "x86_64", "APKINDEX.tar.gz")
+	checksums, err := extractAPKChecksums(apkindexPath)
+	if err != nil {
+		t.Fatalf("Failed to extract checksums from APKINDEX: %v", err)
+	}
+
+	// Verify checksums match actual files
+	for filename, expectedSHA1 := range checksums {
+		pkgPath := filepath.Join(repoDir, "x86_64", filename)
+		actualSHA1, err := calculateSHA1(pkgPath)
+		if err != nil {
+			t.Errorf("Failed to calculate checksum for %s: %v", filename, err)
+			continue
+		}
+
+		if actualSHA1 != expectedSHA1 {
+			t.Errorf("Checksum mismatch for %s:\n  Expected (from APKINDEX): %s\n  Actual (from file): %s",
+				filename, expectedSHA1, actualSHA1)
+		} else {
+			t.Logf("✓ Checksum verified for %s", filename)
+		}
+	}
+}
+
 // Helper functions
 
 func isDockerAvailable() bool {
@@ -846,7 +1068,7 @@ func buildRepogen(projectRoot string) error {
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) &&
 		(s[:len(substr)] == substr || s[len(s)-len(substr):] == substr ||
-		len(s) > len(substr)+1 && findInString(s, substr)))
+			len(s) > len(substr)+1 && findInString(s, substr)))
 }
 
 func findInString(s, substr string) bool {
@@ -915,4 +1137,284 @@ Expire-Date: 0
 	}
 
 	return nil
+}
+
+// Checksum extraction and calculation helpers
+
+func extractPacmanChecksums(dbPath string) (map[string]string, error) {
+	checksums := make(map[string]string)
+
+	// Decompress and extract database
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	zstdCmd := exec.CommandContext(ctx, "zstd", "-d", "-c", dbPath)
+	tarCmd := exec.CommandContext(ctx, "tar", "-x", "-C", os.TempDir())
+
+	zstdOut, err := zstdCmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	tarCmd.Stdin = zstdOut
+
+	if err := zstdCmd.Start(); err != nil {
+		return nil, err
+	}
+
+	output, err := tarCmd.CombinedOutput()
+	if err != nil {
+		zstdCmd.Wait()
+		return nil, fmt.Errorf("tar extraction failed: %v\nOutput: %s", err, output)
+	}
+
+	if err := zstdCmd.Wait(); err != nil {
+		return nil, err
+	}
+
+	// Find and parse desc files
+	descFiles, _ := filepath.Glob(filepath.Join(os.TempDir(), "*/desc"))
+	for _, descFile := range descFiles {
+		content, err := os.ReadFile(descFile)
+		if err != nil {
+			continue
+		}
+
+		var filename, md5sum string
+		lines := strings.Split(string(content), "\n")
+		for i := 0; i < len(lines); i++ {
+			if lines[i] == "%FILENAME%" && i+1 < len(lines) {
+				filename = lines[i+1]
+			}
+			if lines[i] == "%MD5SUM%" && i+1 < len(lines) {
+				md5sum = lines[i+1]
+			}
+		}
+
+		if filename != "" && md5sum != "" {
+			checksums[filename] = md5sum
+		}
+
+		// Clean up
+		os.RemoveAll(filepath.Dir(descFile))
+	}
+
+	return checksums, nil
+}
+
+func extractDebianChecksums(packagesPath string) (map[string]string, error) {
+	checksums := make(map[string]string)
+
+	content, err := os.ReadFile(packagesPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var currentFilename string
+	lines := strings.Split(string(content), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "Filename: ") {
+			currentFilename = strings.TrimPrefix(line, "Filename: ")
+		}
+		if strings.HasPrefix(line, "MD5sum: ") && currentFilename != "" {
+			md5sum := strings.TrimPrefix(line, "MD5sum: ")
+			checksums[currentFilename] = md5sum
+			currentFilename = ""
+		}
+	}
+
+	return checksums, nil
+}
+
+func extractRPMChecksums(primaryXMLPath string) (map[string]string, error) {
+	checksums := make(map[string]string)
+
+	// Decompress primary.xml.gz
+	gzFile, err := os.Open(primaryXMLPath)
+	if err != nil {
+		return nil, err
+	}
+	defer gzFile.Close()
+
+	gzReader, err := exec.Command("gzip", "-d", "-c", primaryXMLPath).Output()
+	if err != nil {
+		return nil, err
+	}
+
+	content := string(gzReader)
+
+	// Simple XML parsing - look for location and checksum
+	var currentLocation, currentChecksum string
+	lines := strings.Split(content, "\n")
+	for _, line := range lines {
+		if strings.Contains(line, `<location href="`) {
+			start := strings.Index(line, `href="`) + 6
+			end := strings.Index(line[start:], `"`)
+			if end > 0 {
+				location := line[start : start+end]
+				// Extract just the filename from Packages/filename.rpm
+				parts := strings.Split(location, "/")
+				if len(parts) > 0 {
+					currentLocation = parts[len(parts)-1]
+				}
+			}
+		}
+		if strings.Contains(line, `<checksum type="sha256"`) {
+			start := strings.Index(line, ">") + 1
+			end := strings.Index(line[start:], "<")
+			if end > 0 {
+				currentChecksum = line[start : start+end]
+			}
+		}
+
+		if currentLocation != "" && currentChecksum != "" {
+			checksums[currentLocation] = currentChecksum
+			currentLocation = ""
+			currentChecksum = ""
+		}
+	}
+
+	return checksums, nil
+}
+
+func extractAPKChecksums(apkindexPath string) (map[string]string, error) {
+	checksums := make(map[string]string)
+
+	// Extract APKINDEX from tar.gz
+	cmd := exec.Command("tar", "-xzOf", apkindexPath, "APKINDEX")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+
+	content := string(output)
+	var currentFilename, currentChecksum string
+	lines := strings.Split(content, "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "P:") {
+			// Reset for new package
+			if currentFilename != "" && currentChecksum != "" {
+				checksums[currentFilename] = currentChecksum
+			}
+			currentFilename = ""
+			currentChecksum = ""
+		}
+		// C field contains SHA1 checksum (without Q prefix)
+		if strings.HasPrefix(line, "C:") {
+			currentChecksum = strings.TrimPrefix(line, "C:")
+		}
+		// P field + V field + A field make up filename
+		if strings.HasPrefix(line, "P:") && currentFilename == "" {
+			// We'll use a simpler approach - look for actual .apk files
+			// and match them by looking at the package name
+		}
+	}
+
+	// For simplicity, just glob the directory and match checksums
+	// APK naming is complex, so we'll match by finding all .apk files
+	dir := filepath.Dir(apkindexPath)
+	apkFiles, _ := filepath.Glob(filepath.Join(dir, "*.apk"))
+	for _, apkFile := range apkFiles {
+		filename := filepath.Base(apkFile)
+		// Find matching checksum from APKINDEX by filename pattern
+		if len(filename) > 20 && strings.Contains(content, filename[:20]) { // Match first part of filename
+			// Find the C: line near this match
+			idx := strings.Index(content, filename[:20])
+			if idx >= 0 {
+				beforeMatch := content[:idx]
+				lastC := strings.LastIndex(beforeMatch, "\nC:")
+				if lastC >= 0 {
+					endC := strings.Index(content[lastC+3:], "\n")
+					if endC > 0 {
+						checksums[filename] = content[lastC+3 : lastC+3+endC]
+					}
+				}
+			}
+		}
+	}
+
+	return checksums, nil
+}
+
+func findRepodataDir(rootDir string) (string, error) {
+	var repodataDir string
+	err := filepath.Walk(rootDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() && info.Name() == "repodata" {
+			repodataDir = path
+			return filepath.SkipDir
+		}
+		return nil
+	})
+
+	if err != nil {
+		return "", err
+	}
+
+	if repodataDir == "" {
+		return "", fmt.Errorf("repodata directory not found in %s", rootDir)
+	}
+
+	return repodataDir, nil
+}
+
+func findPrimaryXML(repodataDir string) (string, error) {
+	files, err := os.ReadDir(repodataDir)
+	if err != nil {
+		return "", err
+	}
+
+	for _, file := range files {
+		if strings.Contains(file.Name(), "primary.xml.gz") {
+			return filepath.Join(repodataDir, file.Name()), nil
+		}
+	}
+
+	return "", fmt.Errorf("primary.xml.gz not found in %s", repodataDir)
+}
+
+func calculateMD5(path string) (string, error) {
+	cmd := exec.Command("md5sum", path)
+	output, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+
+	parts := strings.Fields(string(output))
+	if len(parts) == 0 {
+		return "", fmt.Errorf("invalid md5sum output")
+	}
+
+	return parts[0], nil
+}
+
+func calculateSHA1(path string) (string, error) {
+	cmd := exec.Command("sha1sum", path)
+	output, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+
+	parts := strings.Fields(string(output))
+	if len(parts) == 0 {
+		return "", fmt.Errorf("invalid sha1sum output")
+	}
+
+	return parts[0], nil
+}
+
+func calculateSHA256(path string) (string, error) {
+	cmd := exec.Command("sha256sum", path)
+	output, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+
+	parts := strings.Fields(string(output))
+	if len(parts) == 0 {
+		return "", fmt.Errorf("invalid sha256sum output")
+	}
+
+	return parts[0], nil
 }
