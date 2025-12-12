@@ -145,6 +145,10 @@ func parsePKGINFO(data []byte) (*models.Package, error) {
 			pkg.Maintainer = value
 		case "depend":
 			pkg.Dependencies = append(pkg.Dependencies, value)
+		case "conflict":
+			pkg.Conflicts = append(pkg.Conflicts, value)
+		case "group":
+			pkg.Groups = append(pkg.Groups, value)
 		case "builddate":
 			pkg.Metadata["BuildDate"] = value
 		case "size":

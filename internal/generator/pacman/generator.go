@@ -273,6 +273,24 @@ func generateDescFile(pkg models.Package) ([]byte, error) {
 		buf.WriteString("\n")
 	}
 
+	// Conflicts
+	if len(pkg.Conflicts) > 0 {
+		buf.WriteString("%CONFLICTS%\n")
+		for _, conflict := range pkg.Conflicts {
+			buf.WriteString(fmt.Sprintf("%s\n", conflict))
+		}
+		buf.WriteString("\n")
+	}
+
+	// Groups
+	if len(pkg.Groups) > 0 {
+		buf.WriteString("%GROUPS%\n")
+		for _, group := range pkg.Groups {
+			buf.WriteString(fmt.Sprintf("%s\n", group))
+		}
+		buf.WriteString("\n")
+	}
+
 	return buf.Bytes(), nil
 }
 

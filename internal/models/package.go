@@ -11,6 +11,8 @@ type Package struct {
 	Homepage     string
 	License      string
 	Dependencies []string
+	Conflicts    []string
+	Groups       []string
 
 	// File information
 	Filename  string
