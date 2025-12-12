@@ -5,8 +5,11 @@ type Signer interface {
 	// SignCleartext creates a cleartext signature (for Debian InRelease)
 	SignCleartext(data []byte) ([]byte, error)
 
-	// SignDetached creates a detached signature (for Release.gpg, repomd.xml.asc)
+	// SignDetached creates a detached ASCII-armored signature (for Debian Release.gpg, RPM repomd.xml.asc)
 	SignDetached(data []byte) ([]byte, error)
+
+	// SignDetachedBinary creates a detached binary signature (for Pacman .sig files)
+	SignDetachedBinary(data []byte) ([]byte, error)
 
 	// GetPublicKey returns the public key
 	GetPublicKey() ([]byte, error)

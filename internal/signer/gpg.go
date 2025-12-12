@@ -122,7 +122,7 @@ func (s *GPGSigner) SignCleartext(data []byte) ([]byte, error) {
 	return signedData, nil
 }
 
-// SignDetached creates a detached signature (for Release.gpg, repomd.xml.asc)
+// SignDetached creates a detached ASCII-armored signature (for Debian Release.gpg, RPM repomd.xml.asc)
 func (s *GPGSigner) SignDetached(data []byte) ([]byte, error) {
 	var buf bytes.Buffer
 
@@ -131,6 +131,21 @@ func (s *GPGSigner) SignDetached(data []byte) ([]byte, error) {
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create detached signature: %w", err)
+	}
+
+	return buf.Bytes(), nil
+}
+
+// SignDetachedBinary creates a detached binary signature (for Pacman .sig files)
+// Pacman expects binary OpenPGP signatures, not ASCII-armored ones
+func (s *GPGSigner) SignDetachedBinary(data []byte) ([]byte, error) {
+	var buf bytes.Buffer
+
+	err := openpgp.DetachSign(&buf, s.entity, bytes.NewReader(data), &packet.Config{
+		DefaultHash: crypto.SHA512,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create binary detached signature: %w", err)
 	}
 
 	return buf.Bytes(), nil

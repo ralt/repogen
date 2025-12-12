@@ -121,7 +121,8 @@ func (g *Generator) generateForArch(ctx context.Context, config *models.Reposito
 
 	// Sign database if signer available
 	if g.signer != nil {
-		signature, err := g.signer.SignDetached(dbData)
+		// Use binary signatures for Pacman (not ASCII-armored)
+		signature, err := g.signer.SignDetachedBinary(dbData)
 		if err != nil {
 			return fmt.Errorf("failed to sign database: %w", err)
 		}
@@ -137,7 +138,7 @@ func (g *Generator) generateForArch(ctx context.Context, config *models.Reposito
 			return fmt.Errorf("failed to write signature copy: %w", err)
 		}
 
-		// Sign each package file
+		// Sign each package file with binary signatures
 		for _, pkg := range packages {
 			pkgPath := filepath.Join(archDir, pkg.Filename)
 			pkgData, err := os.ReadFile(pkgPath)
@@ -145,7 +146,7 @@ func (g *Generator) generateForArch(ctx context.Context, config *models.Reposito
 				return fmt.Errorf("failed to read package %s: %w", pkg.Filename, err)
 			}
 
-			pkgSig, err := g.signer.SignDetached(pkgData)
+			pkgSig, err := g.signer.SignDetachedBinary(pkgData)
 			if err != nil {
 				return fmt.Errorf("failed to sign package %s: %w", pkg.Filename, err)
 			}
