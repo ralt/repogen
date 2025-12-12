@@ -7,13 +7,14 @@ Repogen is a CLI tool that generates static repository structures for multiple p
 - **Debian/APT** (.deb packages)
 - **Yum/RPM** (.rpm packages)
 - **Alpine/APK** (.apk packages)
+- **Arch Linux/Pacman** (.pkg.tar.zst, .pkg.tar.xz, .pkg.tar.gz)
 - **Homebrew** (bottle files)
 
 ## Features
 
 - **Automatic Package Detection**: Scans directories and auto-detects package types using magic bytes
 - **Metadata Generation**: Creates all necessary index and metadata files for each repository type
-- **Repository Signing**: Signs repositories with GPG (Debian/RPM) or RSA (Alpine) keys
+- **Repository Signing**: Signs repositories with GPG (Debian/RPM/Pacman) or RSA (Alpine) keys
 - **Unsigned Repository Support**:
   - Always generates InRelease files (required by Debian Trixie)
   - InRelease contains Release content without signature for unsigned repos
@@ -58,13 +59,21 @@ repogen generate -v
 
 ### With Signing
 
-#### Debian/RPM (GPG Signing)
+#### Debian/RPM/Pacman (GPG Signing)
 
 ```bash
 # Generate signed Debian/RPM repositories
 repogen generate \
   --input-dir ./packages \
   --output-dir ./repo \
+  --gpg-key /path/to/private.key \
+  --gpg-passphrase "your-passphrase"
+
+# Generate signed Pacman repository (requires --repo-name)
+repogen generate \
+  --input-dir ./packages \
+  --output-dir ./repo \
+  --repo-name "myrepo" \
   --gpg-key /path/to/private.key \
   --gpg-passphrase "your-passphrase"
 ```
@@ -104,6 +113,7 @@ Flags:
   # Repository Metadata
       --origin string           Repository origin name
       --label string            Repository label
+      --repo-name string        Repository name (required for Pacman)
       --codename string         Codename for Debian repos (default "stable")
       --suite string            Suite for Debian repos (defaults to codename)
       --components strings      Components for Debian repos (default [main])
@@ -216,6 +226,40 @@ sudo apk update
 sudo apk add package-name
 ```
 
+### Arch Linux/Pacman Repository
+
+```
+repo/
+└── x86_64/
+    ├── myrepo.db.tar.zst       # Package database
+    ├── myrepo.db               # Symlink/copy of .db.tar.zst
+    ├── myrepo.db.tar.zst.sig   # GPG signature (if signed)
+    ├── myrepo.db.sig           # Symlink/copy of signature
+    ├── package-1.0.0-1-x86_64.pkg.tar.zst
+    └── package-1.0.0-1-x86_64.pkg.tar.zst.sig  # Package signature (if signed)
+```
+
+**Using the Repository:**
+
+```bash
+# Add repository to /etc/pacman.conf
+sudo tee -a /etc/pacman.conf <<EOF
+[myrepo]
+Server = http://your-server.com/repo/\$arch
+SigLevel = Optional TrustAll
+EOF
+
+# With GPG signing (import public key first)
+sudo pacman-key --add public.key
+sudo pacman-key --lsign-key KEY_ID
+# Update SigLevel in /etc/pacman.conf:
+# SigLevel = Required DatabaseOptional
+
+# Update and install
+sudo pacman -Sy
+sudo pacman -S package-name
+```
+
 ### Homebrew Tap
 
 ```
@@ -307,6 +351,20 @@ Repogen generates Alpine repositories in the apk v2 format:
   - L: License
   - D: Dependencies (space-separated)
 
+### Pacman Repository Format
+
+Repogen generates Pacman (Arch Linux) repositories:
+- **Database file** (e.g., `myrepo.db.tar.zst`): Tarball containing package metadata
+- **desc files**: Package information in Pacman format within the database
+- **Package files**: `.pkg.tar.zst`, `.pkg.tar.xz`, or `.pkg.tar.gz`
+- **Signatures**: Binary GPG signatures (`.sig` files) for database and packages
+- **Database structure**: Each package has a directory with `desc` file containing:
+  - `%FILENAME%`, `%NAME%`, `%VERSION%`, `%DESC%`
+  - `%CSIZE%`, `%ISIZE%` (compressed and installed size)
+  - `%MD5SUM%`, `%SHA256SUM%`
+  - `%ARCH%`, `%BUILDDATE%`, `%PACKAGER%`, `%URL%`, `%LICENSE%`
+  - `%DEPENDS%`, `%CONFLICTS%`, `%GROUPS%`
+
 ### Homebrew Tap Format
 
 Repogen generates Homebrew taps with:
@@ -373,6 +431,26 @@ repogen generate \
   --base-url "https://github.com/username/homebrew-tap/releases/download/v1.0"
 ```
 
+### Example 5: Pacman Repository with Signing
+
+```bash
+# Organize packages
+mkdir packages
+cp *.pkg.tar.zst packages/
+
+# Generate signed repository
+repogen generate \
+  --input-dir packages \
+  --output-dir /var/www/repo \
+  --repo-name "myrepo" \
+  --arch x86_64,aarch64 \
+  --gpg-key ~/.gnupg/secring.gpg \
+  --gpg-passphrase "secret"
+
+# Export public key for users
+gpg --export --armor YOUR_KEY_ID > /var/www/repo/myrepo.key
+```
+
 ## Testing
 
 Repogen includes a comprehensive test suite with Docker-based integration tests that verify each repository type works correctly in its native environment.
@@ -409,6 +487,7 @@ This creates:
 - `test/fixtures/debs/repogen-test_1.0.0_amd64.deb`
 - `test/fixtures/rpms/repogen-test-1.0.0-1.x86_64.rpm`
 - `test/fixtures/apks/repogen-test-1.0.0-r0.apk`
+- `test/fixtures/pacman/repogen-test-1.0.0-1-x86_64.pkg.tar.zst`
 - `test/fixtures/bottles/repogen-test--1.0.0.x86_64_linux.bottle.tar.gz`
 
 ### Integration Tests
@@ -424,6 +503,7 @@ Integration tests use Docker to:
 - **Debian**: Debian Bookworm and Trixie containers
 - **RPM**: Fedora latest container
 - **Alpine**: Alpine latest container
+- **Pacman**: Arch Linux latest container
 - **Homebrew**: Formula validation (local)
 
 **Running Integration Tests:**
@@ -463,6 +543,10 @@ Example output:
     Generating Alpine repository...
     Testing repository in Alpine container...
     ✓ Alpine repository test passed
+=== RUN   TestIntegration/Pacman
+    Generating Pacman repository...
+    Testing repository in Arch Linux container...
+    ✓ Pacman repository test passed
 === RUN   TestIntegration/Homebrew
     Generating Homebrew repository...
     ✓ Homebrew repository test passed
@@ -516,7 +600,7 @@ apt install repogen-test
 
 ### No packages found
 
-- Check that package files have correct extensions (.deb, .rpm, .apk, .bottle.tar.gz)
+- Check that package files have correct extensions (.deb, .rpm, .apk, .pkg.tar.zst/.pkg.tar.xz/.pkg.tar.gz, .bottle.tar.gz)
 - Verify magic bytes in files (packages may be corrupted)
 - Use `--verbose` flag to see detailed scanning output
 
