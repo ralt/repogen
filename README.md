@@ -94,8 +94,8 @@ aws s3 sync s3://my-bucket/repo/dists ./repo/dists --delete
 # Add new packages with repogen
 repogen generate --input-dir ./new-packages --output-dir ./repo --incremental
 
-# Sync everything back to S3
-aws s3 sync ./repo s3://my-bucket/repo --delete
+# Sync everything back to S3 (without --delete to preserve existing packages)
+aws s3 sync ./repo s3://my-bucket/repo
 ```
 
 #### RPM Repository
@@ -111,8 +111,8 @@ repogen generate \
   --incremental \
   --version 40
 
-# Sync back
-aws s3 sync ./repo s3://my-bucket/repo --delete
+# Sync back (without --delete to preserve existing packages)
+aws s3 sync ./repo s3://my-bucket/repo
 ```
 
 #### Pacman Repository
@@ -130,8 +130,8 @@ repogen generate \
   --repo-name myrepo \
   --incremental
 
-# Sync back
-aws s3 sync ./repo s3://my-bucket/repo --delete
+# Sync back (without --delete to preserve existing packages)
+aws s3 sync ./repo s3://my-bucket/repo
 ```
 
 #### APK Repository
@@ -143,8 +143,8 @@ aws s3 cp s3://my-bucket/repo/x86_64/APKINDEX.tar.gz ./repo/x86_64/APKINDEX.tar.
 # Add new packages
 repogen generate --input-dir ./new-packages --output-dir ./repo --incremental
 
-# Sync back
-aws s3 sync ./repo s3://my-bucket/repo --delete
+# Sync back (without --delete to preserve existing packages)
+aws s3 sync ./repo s3://my-bucket/repo
 ```
 
 **Important Notes:**
