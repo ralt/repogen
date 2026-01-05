@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/ralt/repogen/internal/generator"
 	"github.com/ralt/repogen/internal/generator/apk"
@@ -69,6 +70,9 @@ structures with appropriate metadata files and signatures.`,
 	cmd.Flags().StringVar(&config.GPGKeyURL, "gpg-key-url", "", "GPG key URL for RPM .repo files (supports $releasever/$basearch variables)")
 	cmd.Flags().StringVar(&config.DistroVariant, "distro", "fedora", "Distribution variant for RPM repos (fedora, centos, rhel)")
 	cmd.Flags().StringVar(&config.Version, "version", "", "Release version for RPM repos (e.g., 40 for Fedora 40). Auto-detected from RPM metadata if not provided")
+
+	// Incremental mode
+	cmd.Flags().BoolVar(&config.Incremental, "incremental", false, "Add new packages to existing repository without removing existing ones")
 
 	return cmd
 }
@@ -216,23 +220,65 @@ func runGeneration(ctx context.Context, config *models.RepositoryConfig) error {
 	generators[scanner.TypePacman] = pacman.NewGenerator(gpgSigner)
 	generators[scanner.TypeHomebrewBottle] = homebrew.NewGenerator(config.BaseURL)
 
-	for pkgType, packages := range packagesByType {
+	for pkgType, newPackages := range packagesByType {
 		gen, ok := generators[pkgType]
 		if !ok {
 			logrus.Warnf("No generator for package type: %s", pkgType)
 			continue
 		}
 
-		logrus.Infof("Generating %s repository with %d packages...", pkgType, len(packages))
+		var finalPackages []models.Package
 
-		if err := gen.ValidatePackages(packages); err != nil {
+		if config.Incremental {
+			logrus.Infof("Incremental mode: parsing existing %s metadata...", pkgType)
+
+			// Parse existing packages from metadata
+			existingPackages, err := gen.ParseExistingMetadata(config)
+			if err != nil {
+				logrus.Warnf("Could not parse existing metadata for %s: %v. Falling back to normal mode.", pkgType, err)
+				finalPackages = newPackages
+			} else {
+				logrus.Infof("Found %d existing %s packages", len(existingPackages), pkgType)
+
+				// Detect conflicts
+				conflicts := utils.DetectConflicts(existingPackages, newPackages, pkgType)
+				if len(conflicts) > 0 {
+					var conflictNames []string
+					for _, pkg := range conflicts {
+						conflictNames = append(conflictNames, fmt.Sprintf("%s-%s-%s", pkg.Name, pkg.Version, pkg.Architecture))
+					}
+					return &models.RepoGenError{
+						Type: models.ErrInvalidConfig,
+						Err: fmt.Errorf("incremental mode: %d package(s) already exist in repository: %s",
+							len(conflicts), strings.Join(conflictNames, ", ")),
+					}
+				}
+
+				// Combine existing + new packages
+				finalPackages = append(existingPackages, newPackages...)
+				logrus.Infof("Combining %d existing + %d new = %d total %s packages",
+					len(existingPackages), len(newPackages), len(finalPackages), pkgType)
+			}
+		} else {
+			// Normal mode: only new packages
+			finalPackages = newPackages
+		}
+
+		if len(finalPackages) == 0 {
+			logrus.Warn("No packages to process")
+			continue
+		}
+
+		logrus.Infof("Generating %s repository with %d packages...", pkgType, len(finalPackages))
+
+		if err := gen.ValidatePackages(finalPackages); err != nil {
 			return &models.RepoGenError{
 				Type: models.ErrInvalidConfig,
 				Err:  fmt.Errorf("package validation failed for %s: %w", pkgType, err),
 			}
 		}
 
-		if err := gen.Generate(ctx, config, packages); err != nil {
+		if err := gen.Generate(ctx, config, finalPackages); err != nil {
 			return &models.RepoGenError{
 				Type: models.ErrMetadataGen,
 				Err:  fmt.Errorf("failed to generate %s repository: %w", pkgType, err),

@@ -17,4 +17,7 @@ type Generator interface {
 
 	// GetSupportedType returns the package type this generator supports
 	GetSupportedType() scanner.PackageType
+
+	// ParseExistingMetadata reads existing repository metadata and returns packages already in the repo
+	ParseExistingMetadata(config *models.RepositoryConfig) ([]models.Package, error)
 }

@@ -27,4 +27,7 @@ type RepositoryConfig struct {
 	BaseURL       string // For Homebrew bottles and RPM .repo files
 	GPGKeyURL     string // For RPM: explicit GPG key URL (supports $releasever/$basearch variables)
 	DistroVariant string // For RPM: fedora, centos, rhel (affects .repo defaults)
+
+	// Incremental mode
+	Incremental bool // Add new packages to existing repository without removing existing ones
 }

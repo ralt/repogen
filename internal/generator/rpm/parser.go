@@ -1,8 +1,12 @@
 package rpm
 
 import (
+	"compress/gzip"
+	"encoding/xml"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -179,4 +183,126 @@ func parseVersionFromDistro(distro string) string {
 	}
 
 	return ""
+}
+
+// ParseExistingMetadata reads primary.xml from repodata
+func (g *Generator) ParseExistingMetadata(config *models.RepositoryConfig) ([]models.Package, error) {
+	var allPackages []models.Package
+
+	// RPM repos are organized by version/arch
+	// We need to scan all version/arch combinations
+	entries, err := os.ReadDir(config.OutputDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read output directory: %w", err)
+	}
+
+	for _, versionEntry := range entries {
+		if !versionEntry.IsDir() {
+			continue
+		}
+
+		versionDir := filepath.Join(config.OutputDir, versionEntry.Name())
+		archEntries, err := os.ReadDir(versionDir)
+		if err != nil {
+			continue
+		}
+
+		for _, archEntry := range archEntries {
+			if !archEntry.IsDir() {
+				continue
+			}
+
+			archDir := filepath.Join(versionDir, archEntry.Name())
+			packages, err := parsePrimaryXML(archDir)
+			if err != nil {
+				// No metadata in this arch dir, skip
+				continue
+			}
+
+			allPackages = append(allPackages, packages...)
+		}
+	}
+
+	if len(allPackages) == 0 {
+		return nil, fmt.Errorf("no existing RPM metadata found in %s", config.OutputDir)
+	}
+
+	return allPackages, nil
+}
+
+func parsePrimaryXML(archDir string) ([]models.Package, error) {
+	// Read repomd.xml to find primary.xml location
+	repomdPath := filepath.Join(archDir, "repodata", "repomd.xml")
+	repomdData, err := os.ReadFile(repomdPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var repomdDoc repomd
+	if err := xml.Unmarshal(repomdData, &repomdDoc); err != nil {
+		return nil, err
+	}
+
+	// Find primary.xml location
+	var primaryLocation string
+	for _, data := range repomdDoc.Data {
+		if data.Type == "primary" {
+			primaryLocation = data.Location.Href
+			break
+		}
+	}
+
+	if primaryLocation == "" {
+		return nil, fmt.Errorf("primary.xml not found in repomd.xml")
+	}
+
+	// Read and decompress primary.xml.gz
+	primaryPath := filepath.Join(archDir, primaryLocation)
+	f, err := os.Open(primaryPath)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return nil, err
+	}
+	defer gz.Close()
+
+	data, err := io.ReadAll(gz)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse XML
+	var meta metadata
+	if err := xml.Unmarshal(data, &meta); err != nil {
+		return nil, err
+	}
+
+	// Convert to models.Package
+	var packages []models.Package
+	for _, xmlPkg := range meta.Packages {
+		pkg := models.Package{
+			Name:         xmlPkg.Name,
+			Version:      xmlPkg.Version.Ver,
+			Architecture: xmlPkg.Arch,
+			Description:  xmlPkg.Summary,
+			Maintainer:   xmlPkg.Packager,
+			Homepage:     xmlPkg.URL,
+			License:      xmlPkg.Format.License,
+			Filename:     xmlPkg.Location.Href,
+			Size:         xmlPkg.Size.Package,
+			SHA256Sum:    xmlPkg.Checksum.Value,
+			Metadata: map[string]interface{}{
+				"Release":   xmlPkg.Version.Rel,
+				"BuildTime": xmlPkg.Time.Build,
+				"Group":     xmlPkg.Format.Group,
+			},
+		}
+		packages = append(packages, pkg)
+	}
+
+	return packages, nil
 }

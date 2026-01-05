@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/klauspost/compress/zstd"
@@ -227,4 +229,141 @@ func setValue(pkg *models.Package, key, value string) {
 		// Store other fields in metadata
 		pkg.Metadata[key] = value
 	}
+}
+
+// ParseExistingMetadata reads Packages files and returns existing packages
+func (g *Generator) ParseExistingMetadata(config *models.RepositoryConfig) ([]models.Package, error) {
+	var allPackages []models.Package
+
+	// Iterate through all architectures and components
+	for _, arch := range config.Arches {
+		for _, comp := range config.Components {
+			packagesPath := filepath.Join(
+				config.OutputDir,
+				"dists",
+				config.Codename,
+				comp,
+				fmt.Sprintf("binary-%s", arch),
+				"Packages",
+			)
+
+			// Try Packages first, fall back to Packages.gz
+			packages, err := parsePackagesFile(packagesPath)
+			if err != nil {
+				packagesGzPath := packagesPath + ".gz"
+				packages, err = parsePackagesGzFile(packagesGzPath)
+				if err != nil {
+					// No existing metadata for this arch/comp, skip
+					continue
+				}
+			}
+
+			allPackages = append(allPackages, packages...)
+		}
+	}
+
+	if len(allPackages) == 0 {
+		return nil, fmt.Errorf("no existing Debian metadata found in %s", config.OutputDir)
+	}
+
+	return allPackages, nil
+}
+
+func parsePackagesFile(path string) ([]models.Package, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return parsePackagesReader(f)
+}
+
+func parsePackagesGzFile(path string) ([]models.Package, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return nil, err
+	}
+	defer gz.Close()
+
+	return parsePackagesReader(gz)
+}
+
+func parsePackagesReader(r io.Reader) ([]models.Package, error) {
+	var packages []models.Package
+	var currentPkg *models.Package
+
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// Empty line = end of package entry
+		if line == "" {
+			if currentPkg != nil {
+				packages = append(packages, *currentPkg)
+				currentPkg = nil
+			}
+			continue
+		}
+
+		// Parse field: value
+		parts := strings.SplitN(line, ": ", 2)
+		if len(parts) != 2 {
+			continue
+		}
+
+		field := parts[0]
+		value := parts[1]
+
+		if currentPkg == nil {
+			currentPkg = &models.Package{
+				Metadata: make(map[string]interface{}),
+			}
+		}
+
+		// Parse known fields
+		switch field {
+		case "Package":
+			currentPkg.Name = value
+		case "Version":
+			currentPkg.Version = value
+		case "Architecture":
+			currentPkg.Architecture = value
+		case "Filename":
+			currentPkg.Filename = value
+		case "Size":
+			size, _ := strconv.ParseInt(value, 10, 64)
+			currentPkg.Size = size
+		case "MD5sum":
+			currentPkg.MD5Sum = value
+		case "SHA1":
+			currentPkg.SHA1Sum = value
+		case "SHA256":
+			currentPkg.SHA256Sum = value
+		case "SHA512":
+			currentPkg.SHA512Sum = value
+		case "Description":
+			currentPkg.Description = value
+		case "Maintainer":
+			currentPkg.Maintainer = value
+		case "Homepage":
+			currentPkg.Homepage = value
+		case "Depends":
+			currentPkg.Dependencies = strings.Split(value, ", ")
+		default:
+			currentPkg.Metadata[field] = value
+		}
+	}
+
+	// Don't forget last package
+	if currentPkg != nil {
+		packages = append(packages, *currentPkg)
+	}
+
+	return packages, scanner.Err()
 }

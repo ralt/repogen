@@ -5,9 +5,12 @@ import (
 	"bufio"
 	"bytes"
 	"compress/gzip"
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -128,4 +131,140 @@ func parsePKGINFO(data []byte) (*models.Package, error) {
 	}
 
 	return pkg, scanner.Err()
+}
+
+// ParseExistingMetadata reads APKINDEX.tar.gz files
+func (g *Generator) ParseExistingMetadata(config *models.RepositoryConfig) ([]models.Package, error) {
+	var allPackages []models.Package
+
+	for _, arch := range config.Arches {
+		archDir := filepath.Join(config.OutputDir, arch)
+		apkindexPath := filepath.Join(archDir, "APKINDEX.tar.gz")
+
+		packages, err := parseAPKINDEX(apkindexPath)
+		if err != nil {
+			// No existing metadata for this arch
+			continue
+		}
+
+		allPackages = append(allPackages, packages...)
+	}
+
+	if len(allPackages) == 0 {
+		return nil, fmt.Errorf("no existing APK metadata found in %s", config.OutputDir)
+	}
+
+	return allPackages, nil
+}
+
+func parseAPKINDEX(path string) ([]models.Package, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return nil, err
+	}
+	defer gz.Close()
+
+	tr := tar.NewReader(gz)
+
+	// Find APKINDEX file in tar
+	var apkindexData []byte
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		if header.Name == "APKINDEX" {
+			apkindexData, err = io.ReadAll(tr)
+			if err != nil {
+				return nil, err
+			}
+			break
+		}
+	}
+
+	if len(apkindexData) == 0 {
+		return nil, fmt.Errorf("APKINDEX not found in tar")
+	}
+
+	return parseAPKINDEXContent(apkindexData)
+}
+
+func parseAPKINDEXContent(data []byte) ([]models.Package, error) {
+	var packages []models.Package
+	var currentPkg *models.Package
+
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// Empty line = end of package
+		if line == "" {
+			if currentPkg != nil {
+				packages = append(packages, *currentPkg)
+				currentPkg = nil
+			}
+			continue
+		}
+
+		// Format: Letter:Value
+		if len(line) < 2 || line[1] != ':' {
+			continue
+		}
+
+		if currentPkg == nil {
+			currentPkg = &models.Package{
+				Metadata:     make(map[string]interface{}),
+				Dependencies: []string{},
+			}
+		}
+
+		field := line[0]
+		value := line[2:]
+
+		switch field {
+		case 'C': // Checksum (Q1 prefix + base64 SHA1)
+			if strings.HasPrefix(value, "Q1") {
+				sha1Base64 := value[2:]
+				sha1Bytes, _ := base64.StdEncoding.DecodeString(sha1Base64)
+				currentPkg.SHA1Sum = hex.EncodeToString(sha1Bytes)
+			}
+		case 'P': // Package name
+			currentPkg.Name = value
+		case 'V': // Version
+			currentPkg.Version = value
+		case 'A': // Architecture
+			currentPkg.Architecture = value
+		case 'S': // Size
+			size, _ := strconv.ParseInt(value, 10, 64)
+			currentPkg.Size = size
+		case 'I': // Installed size
+			isize, _ := strconv.ParseInt(value, 10, 64)
+			currentPkg.Metadata["installed_size"] = isize
+		case 'T': // Description
+			currentPkg.Description = value
+		case 'U': // Homepage
+			currentPkg.Homepage = value
+		case 'L': // License
+			currentPkg.License = value
+		case 'D': // Dependencies (space-separated)
+			currentPkg.Dependencies = strings.Fields(value)
+		}
+	}
+
+	// Don't forget last package
+	if currentPkg != nil {
+		packages = append(packages, *currentPkg)
+	}
+
+	return packages, scanner.Err()
 }

@@ -57,6 +57,102 @@ repogen generate --input-dir /path/to/packages --output-dir /path/to/repo
 repogen generate -v
 ```
 
+### Incremental Mode
+
+Incremental mode allows you to add new packages to an existing repository without regenerating everything from scratch. This is useful when:
+- You have a large repository and only want to add new package versions
+- You're syncing from S3 and don't want to download all package files locally
+- You want faster repository updates
+
+**How It Works:**
+1. Reads existing metadata files (Packages, trust.db, repomd.xml, etc.) from the output directory
+2. Adds only new packages without removing existing ones
+3. Errors if a package with the same name+version already exists (conflict detection)
+4. Regenerates metadata files with both existing and new packages
+5. Re-signs metadata if signing is enabled
+
+**Basic Incremental Usage:**
+
+```bash
+# Add new packages to existing repository
+repogen generate \
+  --input-dir ./new-packages \
+  --output-dir ./repo \
+  --incremental
+```
+
+**S3 Workflow Examples:**
+
+The incremental mode is particularly powerful when combined with S3. You can sync only the metadata files (not the packages themselves), add new packages, and regenerate.
+
+#### Debian Repository
+
+```bash
+# Sync only metadata from S3 (not package files)
+aws s3 sync s3://my-bucket/repo/dists ./repo/dists --delete
+
+# Add new packages with repogen
+repogen generate --input-dir ./new-packages --output-dir ./repo --incremental
+
+# Sync everything back to S3
+aws s3 sync ./repo s3://my-bucket/repo --delete
+```
+
+#### RPM Repository
+
+```bash
+# Sync only metadata
+aws s3 sync s3://my-bucket/repo/40/x86_64/repodata ./repo/40/x86_64/repodata --delete
+
+# Add new packages
+repogen generate \
+  --input-dir ./new-packages \
+  --output-dir ./repo \
+  --incremental \
+  --version 40
+
+# Sync back
+aws s3 sync ./repo s3://my-bucket/repo --delete
+```
+
+#### Pacman Repository
+
+```bash
+# Sync only database files (exclude actual package files)
+aws s3 sync s3://my-bucket/repo/x86_64 ./repo/x86_64 \
+  --exclude "*.pkg.tar.zst" \
+  --exclude "*.pkg.tar.zst.sig"
+
+# Add new packages
+repogen generate \
+  --input-dir ./new-packages \
+  --output-dir ./repo \
+  --repo-name myrepo \
+  --incremental
+
+# Sync back
+aws s3 sync ./repo s3://my-bucket/repo --delete
+```
+
+#### APK Repository
+
+```bash
+# Sync metadata only
+aws s3 cp s3://my-bucket/repo/x86_64/APKINDEX.tar.gz ./repo/x86_64/APKINDEX.tar.gz
+
+# Add new packages
+repogen generate --input-dir ./new-packages --output-dir ./repo --incremental
+
+# Sync back
+aws s3 sync ./repo s3://my-bucket/repo --delete
+```
+
+**Important Notes:**
+- Incremental mode will error if a package with the same name+version already exists (conflict detection)
+- If metadata files don't exist, it falls back to normal mode automatically
+- Package files from existing metadata don't need to be present locally
+- You can use incremental mode with or without signing
+
 ### With Signing
 
 #### Debian/RPM/Pacman (GPG Signing)
@@ -100,6 +196,9 @@ Flags:
   -i, --input-dir string        Input directory to scan (default ".")
   -o, --output-dir string       Output directory (default "./repo")
   -v, --verbose                 Enable verbose logging
+
+  # Incremental Mode
+      --incremental             Add new packages to existing repository without removing existing ones
 
   # GPG Signing (Debian/RPM)
   -k, --gpg-key string          Path to GPG private key
