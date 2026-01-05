@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -141,12 +140,9 @@ func (g *Generator) generateForArch(ctx context.Context, config *models.Reposito
 		// Sign each package file with binary signatures
 		for _, pkg := range packages {
 			pkgPath := filepath.Join(archDir, pkg.Filename)
-			pkgData, err := os.ReadFile(pkgPath)
-			if err != nil {
-				return fmt.Errorf("failed to read package %s: %w", pkg.Filename, err)
-			}
 
-			pkgSig, err := g.signer.SignDetachedBinary(pkgData)
+			// Use streaming signing to avoid loading entire package into memory
+			pkgSig, err := g.signer.SignDetachedBinaryFromFile(pkgPath)
 			if err != nil {
 				return fmt.Errorf("failed to sign package %s: %w", pkg.Filename, err)
 			}

@@ -183,6 +183,52 @@ func (s *GPGSigner) SignDetachedBinary(data []byte) ([]byte, error) {
 	return signature, nil
 }
 
+// SignDetachedBinaryFromFile creates a detached binary signature directly from a file
+// This avoids loading large files into memory
+func (s *GPGSigner) SignDetachedBinaryFromFile(filePath string) ([]byte, error) {
+	// Create a temporary GPG home directory
+	tmpDir, err := os.MkdirTemp("", "repogen-gpg-*")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Import the key
+	keyPath, err := filepath.Abs(s.keyPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get absolute key path: %w", err)
+	}
+
+	cmd := exec.Command("gpg", "--homedir", tmpDir, "--import", keyPath)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("failed to import key: %w\nOutput: %s", err, output)
+	}
+
+	// Get absolute path for input file
+	inputFile, err := filepath.Abs(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get absolute file path: %w", err)
+	}
+
+	// Sign with GPG - use --detach-sign for binary signature
+	// --no-armor ensures binary output (old packet format compatible with Pacman)
+	outputFile := filepath.Join(tmpDir, "output.sig")
+	cmd = exec.Command("gpg", "--homedir", tmpDir, "--detach-sign",
+		"--digest-algo", "SHA512", "--batch", "--yes",
+		"--output", outputFile, inputFile)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("failed to sign with GPG: %w\nOutput: %s", err, output)
+	}
+
+	// Read the signature
+	signature, err := os.ReadFile(outputFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read signature file: %w", err)
+	}
+
+	return signature, nil
+}
+
 // GetPublicKey returns the public key in armored format
 func (s *GPGSigner) GetPublicKey() ([]byte, error) {
 	var buf bytes.Buffer

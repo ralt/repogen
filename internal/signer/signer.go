@@ -11,6 +11,10 @@ type Signer interface {
 	// SignDetachedBinary creates a detached binary signature (for Pacman .sig files)
 	SignDetachedBinary(data []byte) ([]byte, error)
 
+	// SignDetachedBinaryFromFile creates a detached binary signature directly from a file
+	// This avoids loading large files into memory
+	SignDetachedBinaryFromFile(filePath string) ([]byte, error)
+
 	// GetPublicKey returns the public key
 	GetPublicKey() ([]byte, error)
 }
