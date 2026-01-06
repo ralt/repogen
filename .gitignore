@@ -1,5 +1,5 @@
 # Binaries
-repogen
+/repogen
 *.exe
 *.dll
 *.so
