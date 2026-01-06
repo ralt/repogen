@@ -2,6 +2,10 @@
 
 [![Test](https://github.com/ralt/repogen/actions/workflows/test.yml/badge.svg)](https://github.com/ralt/repogen/actions/workflows/test.yml)
 
+> **⚠️ Alpha Software Warning**
+>
+> Repogen is alpha software and has not been extensively battle-tested in production environments. While it includes comprehensive test coverage and has been validated with package managers, use it with caution for critical infrastructure. Always verify generated repositories work correctly with your package manager before deploying to production.
+
 Repogen is a CLI tool that generates static repository structures for multiple package managers. It scans directories for packages, generates appropriate metadata files, and signs repositories with GPG/RSA keys.
 
 ## Supported Package Types
