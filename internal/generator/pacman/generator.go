@@ -70,26 +70,38 @@ func (g *Generator) generateForArch(ctx context.Context, config *models.Reposito
 	}
 
 	// Copy packages to arch directory and recalculate checksums
-	for i, pkg := range packages {
-		srcPath := pkg.Filename
+	for i := range packages {
+		pkg := &packages[i]
 		dstPath := filepath.Join(archDir, filepath.Base(pkg.Filename))
 
-		if err := utils.CopyFile(srcPath, dstPath); err != nil {
-			return fmt.Errorf("failed to copy package: %w", err)
-		}
-
-		// Recalculate checksums on the copied file to ensure accuracy
-		checksums, err := utils.CalculateChecksums(dstPath)
+		// Check if package needs to be copied
+		srcPath, finalDstPath, needsCopy, err := utils.ShouldCopyPackage(pkg, dstPath, config.OutputDir)
 		if err != nil {
-			return fmt.Errorf("failed to calculate checksums for %s: %w", filepath.Base(pkg.Filename), err)
+			return fmt.Errorf("package copy check failed for %s: %w", pkg.Name, err)
 		}
 
-		// Update package with copied file information
-		packages[i].Filename = filepath.Base(pkg.Filename)
-		packages[i].Size = checksums.Size
-		packages[i].MD5Sum = checksums.MD5
-		packages[i].SHA256Sum = checksums.SHA256
-		packages[i].SHA512Sum = checksums.SHA512
+		if needsCopy {
+			logrus.Debugf("Copying package: %s -> %s", srcPath, finalDstPath)
+
+			if err := utils.CopyFile(srcPath, finalDstPath); err != nil {
+				return fmt.Errorf("failed to copy package: %w", err)
+			}
+
+			// Recalculate checksums on the copied file to ensure accuracy
+			checksums, err := utils.CalculateChecksums(finalDstPath)
+			if err != nil {
+				return fmt.Errorf("failed to calculate checksums for %s: %w", filepath.Base(pkg.Filename), err)
+			}
+			pkg.Size = checksums.Size
+			pkg.MD5Sum = checksums.MD5
+			pkg.SHA256Sum = checksums.SHA256
+			pkg.SHA512Sum = checksums.SHA512
+		} else {
+			logrus.Debugf("Skipping copy for package: %s", pkg.Name)
+		}
+
+		// Update package filename to be relative
+		pkg.Filename = filepath.Base(pkg.Filename)
 	}
 
 	// Generate database name from repo-name, origin, or default

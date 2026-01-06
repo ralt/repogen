@@ -266,5 +266,12 @@ func parseAPKINDEXContent(data []byte) ([]models.Package, error) {
 		packages = append(packages, *currentPkg)
 	}
 
+	// Set filename for each package based on name-version.apk
+	for i := range packages {
+		pkg := &packages[i]
+		// APK packages are named: name-version.apk
+		pkg.Filename = fmt.Sprintf("%s-%s.apk", pkg.Name, pkg.Version)
+	}
+
 	return packages, scanner.Err()
 }

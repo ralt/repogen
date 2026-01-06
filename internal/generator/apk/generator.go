@@ -75,19 +75,32 @@ func (g *Generator) generateForArch(ctx context.Context, config *models.Reposito
 	for i := range packages {
 		pkg := &packages[i]
 		dstPath := filepath.Join(archDir, filepath.Base(pkg.Filename))
-		if err := utils.CopyFile(pkg.Filename, dstPath); err != nil {
-			return fmt.Errorf("failed to copy %s: %w", pkg.Filename, err)
+
+		// Check if package needs to be copied
+		srcPath, finalDstPath, needsCopy, err := utils.ShouldCopyPackage(pkg, dstPath, config.OutputDir)
+		if err != nil {
+			return fmt.Errorf("package copy check failed for %s: %w", pkg.Name, err)
 		}
 
-		// Recalculate checksums on the copied file to ensure accuracy
-		checksums, err := utils.CalculateChecksums(dstPath)
-		if err != nil {
-			return fmt.Errorf("failed to calculate checksums for %s: %w", filepath.Base(pkg.Filename), err)
+		if needsCopy {
+			logrus.Debugf("Copying package: %s -> %s", srcPath, finalDstPath)
+
+			if err := utils.CopyFile(srcPath, finalDstPath); err != nil {
+				return fmt.Errorf("failed to copy %s: %w", srcPath, err)
+			}
+
+			// Recalculate checksums on the copied file to ensure accuracy
+			checksums, err := utils.CalculateChecksums(finalDstPath)
+			if err != nil {
+				return fmt.Errorf("failed to calculate checksums for %s: %w", filepath.Base(pkg.Filename), err)
+			}
+			pkg.Size = checksums.Size
+			pkg.MD5Sum = checksums.MD5
+			pkg.SHA1Sum = checksums.SHA1
+			pkg.SHA256Sum = checksums.SHA256
+		} else {
+			logrus.Debugf("Skipping copy for package: %s", pkg.Name)
 		}
-		pkg.Size = checksums.Size
-		pkg.MD5Sum = checksums.MD5
-		pkg.SHA1Sum = checksums.SHA1
-		pkg.SHA256Sum = checksums.SHA256
 
 		pkg.Filename = filepath.Base(pkg.Filename)
 	}
