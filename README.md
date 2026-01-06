@@ -1,5 +1,7 @@
 # Repogen - Universal Repository Generator
 
+[![Test](https://github.com/ralt/repogen/actions/workflows/test.yml/badge.svg)](https://github.com/ralt/repogen/actions/workflows/test.yml)
+
 Repogen is a CLI tool that generates static repository structures for multiple package managers. It scans directories for packages, generates appropriate metadata files, and signs repositories with GPG/RSA keys.
 
 ## Supported Package Types

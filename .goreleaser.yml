@@ -1,0 +1,66 @@
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: repogen
+    main: ./cmd/repogen
+    binary: repogen
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - id: repogen
+    format: tar.gz
+    name_template: "repogen_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "Merge pull request"
+      - "Merge branch"
+
+release:
+  github:
+    owner: ralt
+    name: repogen
+  draft: false
+  prerelease: auto
+  name_template: "{{ .Tag }}"
+  header: |
+    ## Simple Binary Releases
+
+    Download the appropriate binary for your system below.
+
+  footer: |
+    **Full Package Releases**: For Debian, RPM, Alpine, and Homebrew packages, see the main release artifacts.
+
+    **Installation**:
+    ```bash
+    # Download and install
+    tar -xzf repogen_{{ .Version }}_linux_amd64.tar.gz
+    sudo mv repogen /usr/local/bin/
+    ```
