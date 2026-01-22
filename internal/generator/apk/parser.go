@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"compress/gzip"
+	"crypto/sha1"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -38,6 +39,13 @@ func ParsePackage(path string) (*models.Package, error) {
 		return nil, fmt.Errorf("failed to parse PKGINFO: %w", err)
 	}
 
+	// Calculate control stream checksum for APKINDEX C: field
+	// This is the SHA1 of the control gzip stream (second stream if signed, first if unsigned)
+	controlChecksum, err := calculateControlChecksum(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to calculate control checksum: %w", err)
+	}
+
 	// Set file information (keep full path for copying)
 	pkg.Filename = path
 	pkg.Size = checksums.Size
@@ -45,6 +53,7 @@ func ParsePackage(path string) (*models.Package, error) {
 	pkg.SHA1Sum = checksums.SHA1
 	pkg.SHA256Sum = checksums.SHA256
 	pkg.SHA512Sum = checksums.SHA512
+	pkg.ControlChecksum = controlChecksum
 
 	return pkg, nil
 }
@@ -82,6 +91,100 @@ func extractPKGINFO(path string) ([]byte, error) {
 	}
 
 	return nil, fmt.Errorf(".PKGINFO not found in APK")
+}
+
+// calculateControlChecksum computes the SHA1 hash of the control gzip stream.
+// For APK v2 format, the C: checksum in APKINDEX is the SHA1 of the control stream,
+// which is the second gzip stream (after the signature stream, if present).
+// This is base64-encoded with a "Q1" prefix in the APKINDEX.
+func calculateControlChecksum(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+
+	// APK structure: [signature_stream] control_stream data_stream
+	// If signed: 3 gzip streams (sig, control, data)
+	// If unsigned: 2 gzip streams (control, data)
+	offset := 0
+	firstStreamEnd := findGzipStreamEnd(data, offset)
+	if firstStreamEnd == -1 {
+		return "", fmt.Errorf("could not find first gzip stream boundary")
+	}
+
+	// Check if first stream is a signature stream
+	isSignature, err := isSignatureGzipStream(data[offset:firstStreamEnd])
+	if err != nil {
+		return "", err
+	}
+
+	var controlStart, controlEnd int
+	if isSignature {
+		// Signed package: control is the second stream
+		controlStart = firstStreamEnd
+		controlEnd = findGzipStreamEnd(data, controlStart)
+		if controlEnd == -1 {
+			return "", fmt.Errorf("could not find control gzip stream boundary")
+		}
+	} else {
+		// Unsigned package: control is the first stream
+		controlStart = offset
+		controlEnd = firstStreamEnd
+	}
+
+	// Calculate SHA1 of the control stream raw bytes
+	h := sha1.New()
+	h.Write(data[controlStart:controlEnd])
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// findGzipStreamEnd finds the end offset of a gzip stream starting at the given offset.
+// It searches for the next valid gzip header after the current stream.
+func findGzipStreamEnd(data []byte, start int) int {
+	if start >= len(data) {
+		return -1
+	}
+
+	// Search for the next gzip header (0x1f 0x8b 0x08) after start
+	// We start searching from start+1 to find the NEXT stream
+	for i := start + 1; i < len(data)-2; i++ {
+		if data[i] == 0x1f && data[i+1] == 0x8b && data[i+2] == 0x08 {
+			// Verify this is a valid gzip stream by trying to create a reader
+			testReader := bytes.NewReader(data[i:])
+			testGz, err := gzip.NewReader(testReader)
+			if err == nil {
+				testGz.Close()
+				return i
+			}
+		}
+	}
+
+	// No next stream found - this stream goes to the end
+	return len(data)
+}
+
+// isSignatureGzipStream checks if a gzip stream contains a .SIGN.RSA.* file
+func isSignatureGzipStream(data []byte) (bool, error) {
+	gz, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return false, err
+	}
+	defer gz.Close()
+
+	tr := tar.NewReader(gz)
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return false, err
+		}
+		if strings.HasPrefix(header.Name, ".SIGN.RSA.") {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // parsePKGINFO parses the Alpine PKGINFO format
