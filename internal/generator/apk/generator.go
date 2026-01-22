@@ -69,10 +69,13 @@ func (g *Generator) generateForArch(ctx context.Context, config *models.Reposito
 		return err
 	}
 
-	// Copy APK files to architecture directory and recalculate checksums
+	// Copy APK files to architecture directory
 	for i := range packages {
 		pkg := &packages[i]
-		dstPath := filepath.Join(archDir, filepath.Base(pkg.Filename))
+
+		// Alpine expects package filename in format: {name}-{version}.apk
+		expectedFilename := fmt.Sprintf("%s-%s.apk", pkg.Name, pkg.Version)
+		dstPath := filepath.Join(archDir, expectedFilename)
 
 		// Check if package needs to be copied
 		srcPath, finalDstPath, needsCopy, err := utils.ShouldCopyPackage(pkg, dstPath, config.OutputDir)
@@ -100,7 +103,7 @@ func (g *Generator) generateForArch(ctx context.Context, config *models.Reposito
 			logrus.Debugf("Skipping copy for package: %s", pkg.Name)
 		}
 
-		pkg.Filename = filepath.Base(pkg.Filename)
+		pkg.Filename = expectedFilename
 	}
 
 	// Generate APKINDEX
@@ -112,30 +115,38 @@ func (g *Generator) generateForArch(ctx context.Context, config *models.Reposito
 	// Create DESCRIPTION file
 	descData := []byte(fmt.Sprintf("Alpine Package Index for %s", arch))
 
-	// Package into tar.gz
+	// Package into tar.gz (the data tarball)
 	apkindexTarGz, err := createAPKINDEXTarGz(descData, apkindexData)
 	if err != nil {
 		return fmt.Errorf("failed to create APKINDEX.tar.gz: %w", err)
 	}
 
-	apkindexPath := filepath.Join(archDir, "APKINDEX.tar.gz")
-	if err := utils.WriteFile(apkindexPath, apkindexTarGz, 0644); err != nil {
-		return fmt.Errorf("failed to write APKINDEX.tar.gz: %w", err)
-	}
-
-	// Sign if signer available
+	// Sign if signer available - Alpine requires signature to be embedded in the tarball
+	// The signature segment must be prepended to the data tarball as a separate gzip stream
 	if g.rsaSigner != nil {
 		signature, err := g.rsaSigner.SignRSA(apkindexTarGz)
 		if err != nil {
 			return fmt.Errorf("failed to sign APKINDEX: %w", err)
 		}
 
-		sigPath := filepath.Join(archDir, fmt.Sprintf("APKINDEX.tar.gz.SIGN.RSA.%s.pub", g.keyName))
-		if err := utils.WriteFile(sigPath, signature, 0644); err != nil {
-			return fmt.Errorf("failed to write signature: %w", err)
+		// Create signed tarball by prepending signature segment
+		signedTarGz, err := createSignedAPKINDEX(signature, g.keyName, apkindexTarGz)
+		if err != nil {
+			return fmt.Errorf("failed to create signed APKINDEX: %w", err)
+		}
+
+		apkindexPath := filepath.Join(archDir, "APKINDEX.tar.gz")
+		if err := utils.WriteFile(apkindexPath, signedTarGz, 0644); err != nil {
+			return fmt.Errorf("failed to write signed APKINDEX.tar.gz: %w", err)
 		}
 
 		logrus.Info("APKINDEX signed successfully")
+	} else {
+		// Write unsigned tarball
+		apkindexPath := filepath.Join(archDir, "APKINDEX.tar.gz")
+		if err := utils.WriteFile(apkindexPath, apkindexTarGz, 0644); err != nil {
+			return fmt.Errorf("failed to write APKINDEX.tar.gz: %w", err)
+		}
 	}
 
 	logrus.Infof("Generated APKINDEX for %s (%d packages)", arch, len(packages))
@@ -147,10 +158,10 @@ func generateAPKINDEX(packages []models.Package) ([]byte, error) {
 	var buf bytes.Buffer
 
 	for i, pkg := range packages {
-		// Convert SHA1 hex string to bytes, then base64 encode with Q1 prefix
-		sha1Bytes, err := hex.DecodeString(pkg.SHA1Sum)
+		// C: is the SHA1 hash of the control stream, base64-encoded with Q1 prefix
+		sha1Bytes, err := hex.DecodeString(pkg.ControlChecksum)
 		if err != nil {
-			return nil, fmt.Errorf("failed to decode SHA1 for %s: %w", pkg.Name, err)
+			return nil, fmt.Errorf("failed to decode control checksum for %s: %w", pkg.Name, err)
 		}
 		checksum := "Q1" + base64.StdEncoding.EncodeToString(sha1Bytes)
 
@@ -213,6 +224,56 @@ func createAPKINDEXTarGz(description, apkindex []byte) ([]byte, error) {
 	}
 
 	return buf.Bytes(), nil
+}
+
+// createSignedAPKINDEX creates a signed APKINDEX.tar.gz by prepending a signature segment
+// Alpine APK format requires the signature to be embedded as the first gzip stream
+// containing a tar segment with a single file: .SIGN.RSA.<keyname>.rsa.pub
+func createSignedAPKINDEX(signature []byte, keyName string, dataTarGz []byte) ([]byte, error) {
+	// Create signature tar segment
+	var sigTarBuf bytes.Buffer
+	tw := tar.NewWriter(&sigTarBuf)
+
+	// The signature file name format: .SIGN.RSA.<keyname>.rsa.pub
+	sigFileName := fmt.Sprintf(".SIGN.RSA.%s.rsa.pub", keyName)
+
+	header := &tar.Header{
+		Name: sigFileName,
+		Mode: 0644,
+		Size: int64(len(signature)),
+		Uid:  0,
+		Gid:  0,
+	}
+
+	if err := tw.WriteHeader(header); err != nil {
+		return nil, fmt.Errorf("failed to write signature tar header: %w", err)
+	}
+
+	if _, err := tw.Write(signature); err != nil {
+		return nil, fmt.Errorf("failed to write signature to tar: %w", err)
+	}
+
+	// Flush the tar writer but don't close it (we want a tar segment, not a complete tarball)
+	if err := tw.Flush(); err != nil {
+		return nil, fmt.Errorf("failed to flush signature tar: %w", err)
+	}
+
+	// Gzip compress the signature segment
+	var sigGzBuf bytes.Buffer
+	gw := gzip.NewWriter(&sigGzBuf)
+	if _, err := gw.Write(sigTarBuf.Bytes()); err != nil {
+		return nil, fmt.Errorf("failed to gzip signature segment: %w", err)
+	}
+	if err := gw.Close(); err != nil {
+		return nil, fmt.Errorf("failed to close signature gzip: %w", err)
+	}
+
+	// Concatenate: signature gzip stream + data gzip stream
+	var result bytes.Buffer
+	result.Write(sigGzBuf.Bytes())
+	result.Write(dataTarGz)
+
+	return result.Bytes(), nil
 }
 
 // addTarFile adds a file to a tar archive
